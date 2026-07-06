@@ -1,4 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = "https://xhqnvaizvczspcwzrpnu.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhocW52YWl6dmN6c3Bjd3pycG51Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0OTQ2MjUsImV4cCI6MjA5ODA3MDYyNX0.oiUlNoe4833clEN1AgbC-0368S7oNzjYrHg-YkkHmxo";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const C = {
   ink: "#1C1C1C", warm: "#F6F2EC", gold: "#B8966E", goldLight: "#EDE0CE",
@@ -17,20 +22,6 @@ const ROLE_OPTIONS = [
 ];
 
 const LEADERSHIP_ROLES = ["team_leader", "manager", "gm", "owner"];
-
-const DEFAULT_ROSTER = [
-  { id: "cara",    name: "Cara Shidler",           role: "front_desk",  active: true,  startDate: "2026-06-23" },
-  { id: "ali",     name: "Ali H",                  role: "stylist",     active: true,  startDate: "2026-06-23" },
-  { id: "katie",   name: "Katie C",                role: "stylist",     active: true,  startDate: "2026-06-23" },
-  { id: "savanna", name: "Savanna Silva-Villegas",  role: "stylist",     active: true,  startDate: "2026-06-23" },
-  { id: "teagan",  name: "Teagan J",               role: "stylist",     active: true,  startDate: "2026-06-23" },
-  { id: "vanessa", name: "Vanessa Lasnoski",        role: "stylist",     active: true,  startDate: "2026-06-23" },
-  { id: "olivia",  name: "Olivia",                 role: "stylist",     active: false, startDate: null },
-  { id: "darby",   name: "Darby E",                role: "team_leader", active: true,  startDate: "2026-06-23" },
-  { id: "alexis",  name: "Alexis S",               role: "manager",     active: true,  startDate: "2026-06-23" },
-  { id: "payton",  name: "Payton K",               role: "gm",          active: true,  startDate: "2026-06-23" },
-  { id: "vicki",   name: "Vicki T",                role: "owner",       active: true,  startDate: "2026-06-23" },
-];
 
 const SCORECARDS = {
   stylist: {
@@ -80,7 +71,7 @@ const SCORECARDS = {
   gm: {
     label: "Payton",
     metrics: [
-      { id: "pink_trend",       label: "Pink Team Trend (week over week)",     desc: "0 = more pink than last week · 1 = same or fewer than last week · 2 = zero pink this week",                  source: "Scorecard" },
+      { id: "pink_trend",       label: "Pink Team Trend (week over week)",     desc: "0 = more pink than last week · 1 = same or fewer than last week · 2 = zero pink this week", source: "Scorecard" },
       { id: "team_kpi_avg",     label: "Team KPI Average",                     desc: "0 = <50% · 1 = 50–74% · 2 = 75%+",                           source: "Scorecard" },
       { id: "open_issues",      label: "Open Issues",                          desc: "0 = untouched/rolled over · 1 = resolved or in progress · 2 = resolved + system created to prevent recurrence", source: "Manual" },
       { id: "hiring",           label: "Hiring Pipeline",                      desc: "0 = 0 interviews/mo · 1 = 1/mo · 2 = 2+/mo",                 source: "Manual"    },
@@ -115,7 +106,7 @@ const SCORECARDS = {
 const SCORE_COLOR = { 0: C.pink, 1: C.gold, 2: C.green };
 const MAX_PTS = 12;
 const GREEN_MIN = 6;
-const STORAGE_KEY = "refinery_v3";
+const START_DATE = "2026-06-23";
 
 function getMondayOf(date) {
   const d = new Date(date);
@@ -152,26 +143,18 @@ function groupByQuarter(keys) {
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
-function loadData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { roster: DEFAULT_ROSTER, startDate: "2026-06-23", scores: {} };
-}
-function saveData(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }
-
 function getMemberCards(member) {
   return LEADERSHIP_ROLES.includes(member.role) ? ["stylist", member.role] : [member.role];
 }
 function calcCardPts(cardType, scores) {
   const card = SCORECARDS[cardType];
-  const filled = card.metrics.filter(m => m.handicap || scores[m.id] !== undefined).length;
+  const s = scores || {};
+  const filled = card.metrics.filter(m => m.handicap || s[m.id] !== undefined).length;
   if (filled < card.metrics.length) return null;
-  return card.metrics.reduce((acc, m) => m.handicap ? acc + 2 : acc + (scores[m.id] || 0), 0);
+  return card.metrics.reduce((acc, m) => m.handicap ? acc + 2 : acc + (s[m.id] || 0), 0);
 }
 function getMemberWeekPts(member, weekScores) {
-  return getMemberCards(member).map(r => calcCardPts(r, weekScores?.[member.id]?.[r] || {}));
+  return getMemberCards(member).map(r => calcCardPts(r, weekScores?.[member.id]?.[r]));
 }
 function getMemberCumulativePts(member, allScores) {
   return Object.values(allScores).reduce((t, ws) => t + getMemberWeekPts(member, ws).reduce((a, p) => a + (p ?? 0), 0), 0);
@@ -196,7 +179,7 @@ function ScoreBtn({ val, current, onChange }) {
 function ScorecardPanel({ member, cardType, scores, onScore }) {
   const card = SCORECARDS[cardType];
   const pts = calcCardPts(cardType, scores);
-  const filled = card.metrics.filter(m => m.handicap || scores[m.id] !== undefined).length;
+  const filled = card.metrics.filter(m => m.handicap || scores?.[m.id] !== undefined).length;
   const isGreen = pts !== null && pts >= GREEN_MIN;
   return (
     <div style={{ background: C.white, borderRadius: 12, border: `1.5px solid ${C.border}`, overflow: "hidden" }}>
@@ -224,7 +207,7 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
             </div>
             {m.handicap
               ? <div style={{ fontSize: 12, color: C.gold, fontWeight: 700, padding: "6px 10px", background: C.goldLight, borderRadius: 8, flexShrink: 0 }}>Auto 2</div>
-              : <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>{[0, 1, 2].map(v => <ScoreBtn key={v} val={v} current={scores[m.id]} onChange={v => onScore(m.id, v)} />)}</div>
+              : <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>{[0, 1, 2].map(v => <ScoreBtn key={v} val={v} current={scores?.[m.id]} onChange={v => onScore(m.id, v)} />)}</div>
             }
           </div>
         ))}
@@ -237,9 +220,10 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
   );
 }
 
-function Dashboard({ data, activeTeam }) {
+function Dashboard({ roster, allScores }) {
+  const activeTeam = roster.filter(m => m.active);
   const wk = currentWeekKey();
-  const ws = data.scores[wk] || {};
+  const ws = allScores[wk] || {};
   const pinkCount = activeTeam.filter(m => getMemberWeekPts(m, ws).some(p => p !== null && p < GREEN_MIN)).length;
   const greenCount = activeTeam.filter(m => { const pts = getMemberWeekPts(m, ws); return pts.every(p => p === null || p >= GREEN_MIN) && pts.some(p => p !== null); }).length;
   const flag = pinkCount >= 4 ? "red" : pinkCount >= 2 ? "yellow" : "clear";
@@ -288,19 +272,11 @@ function Dashboard({ data, activeTeam }) {
   );
 }
 
-function ScoreView({ data, setData, activeTeam }) {
+function ScoreView({ roster, allScores, onScore }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const wk = currentWeekKey();
-  const getS = (id, r) => data.scores?.[wk]?.[id]?.[r] || {};
-  const setScore = (id, r, mid, val) => setData(prev => {
-    const next = JSON.parse(JSON.stringify(prev));
-    if (!next.scores[wk]) next.scores[wk] = {};
-    if (!next.scores[wk][id]) next.scores[wk][id] = {};
-    if (!next.scores[wk][id][r]) next.scores[wk][id][r] = {};
-    next.scores[wk][id][r][mid] = val;
-    return next;
-  });
+  const activeTeam = roster.filter(m => m.active);
 
   if (sel) {
     const cards = getMemberCards(sel);
@@ -315,7 +291,14 @@ function ScoreView({ data, setData, activeTeam }) {
             </button>
           ))}
         </div>
-        {card && <ScorecardPanel member={sel} cardType={card} scores={getS(sel.id, card)} onScore={(mid, val) => setScore(sel.id, card, mid, val)} />}
+        {card && (
+          <ScorecardPanel
+            member={sel}
+            cardType={card}
+            scores={allScores?.[wk]?.[sel.id]?.[card]}
+            onScore={(mid, val) => onScore(wk, sel.id, card, mid, val)}
+          />
+        )}
       </div>
     );
   }
@@ -328,7 +311,7 @@ function ScoreView({ data, setData, activeTeam }) {
       </div>
       {activeTeam.map(member => {
         const cards = getMemberCards(member);
-        const pts = getMemberWeekPts(member, data.scores?.[wk] || {});
+        const pts = getMemberWeekPts(member, allScores?.[wk] || {});
         const done = pts.every(p => p !== null);
         return (
           <button key={member.id} onClick={() => { setSel(member); setCard(cards[0]); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: C.white, border: `1.5px solid ${done ? C.green : C.border}`, borderRadius: 10, cursor: "pointer", textAlign: "left" }}>
@@ -345,10 +328,11 @@ function ScoreView({ data, setData, activeTeam }) {
   );
 }
 
-function HistoryView({ data, activeTeam }) {
+function HistoryView({ roster, allScores }) {
+  const activeTeam = roster.filter(m => m.active);
   const [mode, setMode] = useState("weekly");
   const [selWeek, setSelWeek] = useState(currentWeekKey());
-  const allWeeks = useMemo(() => allWeeksSince(data.startDate), [data.startDate]);
+  const allWeeks = useMemo(() => allWeeksSince(START_DATE), []);
   const qGroups = useMemo(() => groupByQuarter(allWeeks), [allWeeks]);
   const qKeys = Object.keys(qGroups).sort().reverse();
 
@@ -378,7 +362,7 @@ function HistoryView({ data, activeTeam }) {
               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Week of {weekLabelFromKey(selWeek)}</div>
             </div>
             {activeTeam.map((m, i) => {
-              const pts = getMemberWeekPts(m, data.scores?.[selWeek] || {});
+              const pts = getMemberWeekPts(m, allScores?.[selWeek] || {});
               return (
                 <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "11px 20px", gap: 12, borderBottom: i < activeTeam.length - 1 ? `1px solid ${C.border}` : "none", flexWrap: "wrap" }}>
                   <Avatar name={m.name} size={34} />
@@ -396,13 +380,13 @@ function HistoryView({ data, activeTeam }) {
           {qKeys.map(qk => {
             const weeks = qGroups[qk];
             const ranked = [...activeTeam].map(m => {
-              const total = weeks.reduce((acc, wk) => acc + getMemberWeekPts(m, data.scores?.[wk] || {}).reduce((a, p) => a + (p ?? 0), 0), 0);
-              const ws = weeks.filter(wk => getMemberWeekPts(m, data.scores?.[wk] || {}).some(p => p !== null)).length;
+              const total = weeks.reduce((acc, wk) => acc + getMemberWeekPts(m, allScores?.[wk] || {}).reduce((a, p) => a + (p ?? 0), 0), 0);
+              const ws = weeks.filter(wk => getMemberWeekPts(m, allScores?.[wk] || {}).some(p => p !== null)).length;
               return { member: m, total, ws };
             }).sort((a, b) => b.total - a.total);
             return (
               <div key={qk} style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-                <div style={{ padding: "14px 20px", background: C.ink, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ padding: "14px 20px", background: C.ink, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ fontSize: 15, fontWeight: 800, color: C.white }}>{qk}</div>
                   <div style={{ fontSize: 11, color: C.gold }}>{weeks.length} week{weeks.length !== 1 ? "s" : ""}</div>
                 </div>
@@ -433,7 +417,7 @@ function HistoryView({ data, activeTeam }) {
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
             {[...activeTeam]
-              .map(m => ({ m, total: getMemberCumulativePts(m, data.scores), weeks: Object.keys(data.scores).filter(wk => getMemberWeekPts(m, data.scores[wk]).some(p => p !== null)).length }))
+              .map(m => ({ m, total: getMemberCumulativePts(m, allScores), weeks: Object.keys(allScores).filter(wk => getMemberWeekPts(m, allScores[wk]).some(p => p !== null)).length }))
               .sort((a, b) => b.total - a.total)
               .map(({ m, total, weeks }, i, arr) => {
                 const maxPts = arr[0]?.total || 1;
@@ -460,34 +444,11 @@ function HistoryView({ data, activeTeam }) {
   );
 }
 
-// ── ROSTER MANAGEMENT ─────────────────────────────────────────────────────────
-function RosterView({ data, setData }) {
+function RosterView({ roster, onRosterChange }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: "", role: "stylist" });
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState({});
-
-  const roster = data.roster;
-
-  const activateToggle = (id) => setData(prev => ({
-    ...prev,
-    roster: prev.roster.map(m => m.id === id ? { ...m, active: !m.active, startDate: !m.active ? currentWeekKey() : m.startDate } : m),
-  }));
-
-  const addMember = () => {
-    if (!form.name.trim()) return;
-    setData(prev => ({
-      ...prev,
-      roster: [...prev.roster, { id: uid(), name: form.name.trim(), role: form.role, active: true, startDate: currentWeekKey() }],
-    }));
-    setForm({ name: "", role: "stylist" });
-    setAdding(false);
-  };
-
-  const saveEdit = (id) => {
-    setData(prev => ({ ...prev, roster: prev.roster.map(m => m.id === id ? { ...m, ...editForm } : m) }));
-    setEditId(null);
-  };
 
   const active = roster.filter(m => m.active);
   const inactive = roster.filter(m => !m.active);
@@ -503,18 +464,18 @@ function RosterView({ data, setData }) {
             <select value={editForm.role} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))} style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }}>
               {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
-            <button onClick={() => saveEdit(m.id)} style={{ padding: "6px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Save</button>
+            <button onClick={() => { onRosterChange("update", { ...m, ...editForm }); setEditId(null); }} style={{ padding: "6px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Save</button>
             <button onClick={() => setEditId(null)} style={{ padding: "6px 14px", borderRadius: 8, background: C.border, color: C.ink, border: "none", fontSize: 12, cursor: "pointer" }}>Cancel</button>
           </div>
         ) : (
           <>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
-              <div style={{ fontSize: 11, color: C.muted }}>{ROLE_OPTIONS.find(r => r.value === m.role)?.label}{m.startDate ? ` · Started ${weekLabelFromKey(m.startDate)}` : ""}</div>
+              <div style={{ fontSize: 11, color: C.muted }}>{ROLE_OPTIONS.find(r => r.value === m.role)?.label}{m.start_date ? ` · Started ${weekLabelFromKey(m.start_date)}` : ""}</div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
               <button onClick={() => { setEditId(m.id); setEditForm({ name: m.name, role: m.role }); }} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 11, cursor: "pointer", color: C.muted }}>Edit</button>
-              <button onClick={() => activateToggle(m.id)} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${m.active ? C.pink : C.green}`, background: m.active ? C.pinkLight : C.greenLight, fontSize: 11, cursor: "pointer", fontWeight: 700, color: m.active ? C.pink : C.green }}>
+              <button onClick={() => onRosterChange("toggle", m)} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${m.active ? C.pink : C.green}`, background: m.active ? C.pinkLight : C.greenLight, fontSize: 11, cursor: "pointer", fontWeight: 700, color: m.active ? C.pink : C.green }}>
                 {m.active ? "Deactivate" : "Activate"}
               </button>
             </div>
@@ -527,10 +488,8 @@ function RosterView({ data, setData }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: C.steel, fontWeight: 600 }}>
-        ℹ️ Deactivating a team member hides them from scoring and dashboards — their history is never deleted and will reappear if reactivated.
+        ℹ️ Deactivating hides a team member from scoring and dashboards — history is never deleted.
       </div>
-
-      {/* Active */}
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
         <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Active Team ({active.length})</div>
@@ -542,14 +501,12 @@ function RosterView({ data, setData }) {
             <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} style={{ padding: "7px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }}>
               {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
-            <button onClick={addMember} style={{ padding: "7px 16px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Add</button>
+            <button onClick={() => { if (form.name.trim()) { onRosterChange("add", { id: uid(), name: form.name.trim(), role: form.role, active: true, start_date: currentWeekKey() }); setForm({ name: "", role: "stylist" }); setAdding(false); } }} style={{ padding: "7px 16px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Add</button>
             <button onClick={() => setAdding(false)} style={{ padding: "7px 12px", borderRadius: 8, background: C.border, color: C.ink, border: "none", fontSize: 13, cursor: "pointer" }}>Cancel</button>
           </div>
         )}
         {active.map(m => <MemberRow key={m.id} m={m} />)}
       </div>
-
-      {/* Inactive */}
       {inactive.length > 0 && (
         <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}` }}>
@@ -562,18 +519,96 @@ function RosterView({ data, setData }) {
   );
 }
 
-// ── APP ───────────────────────────────────────────────────────────────────────
 export default function RefineryApp() {
-  const [data, setData] = useState(loadData);
+  const [roster, setRoster] = useState([]);
+  const [allScores, setAllScores] = useState({});
+  const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
 
-  useEffect(() => { saveData(data); }, [data]);
+  // Load roster from Supabase
+  useEffect(() => {
+    async function loadRoster() {
+      const { data, error } = await supabase.from("roster").select("*").order("name");
+      if (!error && data) setRoster(data);
+    }
+    async function loadScores() {
+      const { data, error } = await supabase.from("scores").select("*");
+      if (!error && data) {
+        const structured = {};
+        data.forEach(row => {
+          if (!structured[row.week_key]) structured[row.week_key] = {};
+          if (!structured[row.week_key][row.member_id]) structured[row.week_key][row.member_id] = {};
+          if (!structured[row.week_key][row.member_id][row.card_type]) structured[row.week_key][row.member_id][row.card_type] = {};
+          structured[row.week_key][row.member_id][row.card_type][row.metric_id] = row.score;
+        });
+        setAllScores(structured);
+      }
+      setLoading(false);
+    }
+    loadRoster();
+    loadScores();
+  }, []);
 
-  // Ensure new team members added via roster show up properly
-  const activeTeam = data.roster.filter(m => m.active);
+  // Real-time score updates
+  useEffect(() => {
+    const channel = supabase.channel("scores-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "scores" }, payload => {
+        const row = payload.new;
+        if (!row) return;
+        setAllScores(prev => {
+          const next = JSON.parse(JSON.stringify(prev));
+          if (!next[row.week_key]) next[row.week_key] = {};
+          if (!next[row.week_key][row.member_id]) next[row.week_key][row.member_id] = {};
+          if (!next[row.week_key][row.member_id][row.card_type]) next[row.week_key][row.member_id][row.card_type] = {};
+          next[row.week_key][row.member_id][row.card_type][row.metric_id] = row.score;
+          return next;
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
+    // Optimistic update
+    setAllScores(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next[weekKey]) next[weekKey] = {};
+      if (!next[weekKey][memberId]) next[weekKey][memberId] = {};
+      if (!next[weekKey][memberId][cardType]) next[weekKey][memberId][cardType] = {};
+      next[weekKey][memberId][cardType][metricId] = val;
+      return next;
+    });
+    // Save to Supabase
+    await supabase.from("scores").upsert({
+      week_key: weekKey, member_id: memberId, card_type: cardType, metric_id: metricId, score: val, updated_at: new Date().toISOString()
+    }, { onConflict: "week_key,member_id,card_type,metric_id" });
+  };
+
+  const handleRosterChange = async (action, member) => {
+    if (action === "add") {
+      await supabase.from("roster").insert(member);
+      setRoster(prev => [...prev, member]);
+    } else if (action === "toggle") {
+      const updated = { ...member, active: !member.active, start_date: !member.active ? currentWeekKey() : member.start_date };
+      await supabase.from("roster").update({ active: updated.active, start_date: updated.start_date }).eq("id", member.id);
+      setRoster(prev => prev.map(m => m.id === member.id ? updated : m));
+    } else if (action === "update") {
+      await supabase.from("roster").update({ name: member.name, role: member.role }).eq("id", member.id);
+      setRoster(prev => prev.map(m => m.id === member.id ? member : m));
+    }
+  };
 
   const NavBtn = ({ id, label }) => (
-    <button onClick={() => setView(id)} style={{ padding: "8px 16px", borderRadius: "8px 8px 0 0", background: view === id ? C.warm : "transparent", color: view === id ? C.ink : "#aaa", border: "none", fontWeight: view === id ? 700 : 500, fontSize: 12, cursor: "pointer", transition: "all 0.12s", whiteSpace: "nowrap" }}>{label}</button>
+    <button onClick={() => setView(id)} style={{ padding: "8px 16px", borderRadius: "8px 8px 0 0", background: view === id ? C.warm : "transparent", color: view === id ? C.ink : "#aaa", border: "none", fontWeight: view === id ? 700 : 500, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>
+  );
+
+  if (loading) return (
+    <div style={{ minHeight: "100vh", background: C.warm, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>The Refinery</div>
+        <div style={{ fontSize: 16, color: C.muted }}>Loading performance data...</div>
+      </div>
+    </div>
   );
 
   return (
@@ -593,10 +628,10 @@ export default function RefineryApp() {
         </div>
       </div>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard data={data} activeTeam={activeTeam} />}
-        {view === "score" && <ScoreView data={data} setData={setData} activeTeam={activeTeam} />}
-        {view === "history" && <HistoryView data={data} activeTeam={activeTeam} />}
-        {view === "roster" && <RosterView data={data} setData={setData} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} />}
+        {view === "history" && <HistoryView roster={roster} allScores={allScores} />}
+        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} />}
       </div>
     </div>
   );
