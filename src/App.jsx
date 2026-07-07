@@ -121,6 +121,48 @@ const SCORE_COLOR = { 0: C.pink, 1: C.gold, 2: C.green };
 const MAX_PTS = 12;
 const GREEN_MIN = 6;
 const START_DATE = "2026-06-23";
+const APP_PIN = "2363";
+
+function PinLock({ onUnlock }) {
+  const [input, setInput] = useState("");
+  const [error, setError] = useState(false);
+
+  const submit = () => {
+    if (input === APP_PIN) {
+      onUnlock();
+    } else {
+      setError(true);
+      setInput("");
+      setTimeout(() => setError(false), 1200);
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.warm, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 }}>
+      <div style={{ background: C.white, borderRadius: 16, border: `1.5px solid ${C.border}`, padding: "32px 28px", maxWidth: 320, width: "100%", textAlign: "center" }}>
+        <div style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>The Refinery</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.ink, marginBottom: 4 }}>Enter PIN to Continue</div>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 20 }}>Required to score or manage the roster</div>
+        <input
+          type="password"
+          inputMode="numeric"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && submit()}
+          placeholder="••••"
+          style={{
+            width: "100%", padding: "12px", borderRadius: 10, textAlign: "center", fontSize: 22, letterSpacing: 8,
+            border: `2px solid ${error ? C.pink : C.border}`, marginBottom: 14, boxSizing: "border-box",
+            animation: error ? "shake 0.3s" : "none",
+          }}
+          autoFocus
+        />
+        {error && <div style={{ fontSize: 12, color: C.pink, marginBottom: 12 }}>Incorrect PIN, try again</div>}
+        <button onClick={submit} style={{ width: "100%", padding: "12px", borderRadius: 10, background: C.ink, color: C.white, border: "none", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Unlock</button>
+      </div>
+    </div>
+  );
+}
 
 function getMondayOf(date) {
   const d = new Date(date);
@@ -361,11 +403,100 @@ function Dashboard({ roster, allScores }) {
   );
 }
 
+// ── PHOREST DATA PULL ─────────────────────────────────────────────────────────
+function getPriorWeekRange(weekKey) {
+  // weekKey is the Monday of the week being scored — we pull the previous Mon-Sun
+  const monday = new Date(weekKey + "T00:00:00");
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const fmt = d => d.toISOString().slice(0, 10);
+  return { startFilter: fmt(monday), finishFilter: fmt(sunday) };
+}
+
+function parseCSV(text) {
+  const lines = text.split("\n").filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map(h => h.trim().replace(/"/g, ""));
+  return lines.slice(1).map(line => {
+    // naive CSV split — Phorest CSVs are typically comma-delimited without embedded commas in key fields
+    const cols = line.split(",").map(c => c.trim().replace(/"/g, ""));
+    const row = {};
+    headers.forEach((h, i) => { row[h] = cols[i]; });
+    return row;
+  });
+}
+
+async function pullPhorestWeek(weekKey) {
+  const { startFilter, finishFilter } = getPriorWeekRange(weekKey);
+
+  // Step 1: create job
+  const createRes = await fetch(`/api/phorest?action=create-job`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ startFilter, finishFilter }),
+  });
+  const job = await createRes.json();
+  if (!job.jobId) throw new Error("Failed to create Phorest export job");
+
+  // Step 2: poll until done (max ~30s)
+  let status = job;
+  for (let i = 0; i < 15; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const checkRes = await fetch(`/api/phorest?action=check-job&jobId=${job.jobId}`);
+    status = await checkRes.json();
+    if (status.jobStatus === "DONE") break;
+    if (status.jobStatus === "FAILED") throw new Error(status.failureReason || "Phorest export failed");
+  }
+  if (status.jobStatus !== "DONE") throw new Error("Phorest export timed out — try again in a minute");
+  if (!status.tempCsvExternalUrl) throw new Error("No data returned for this date range");
+
+  // Step 3: fetch CSV
+  const csvRes = await fetch(`/api/phorest?action=fetch-csv&url=${encodeURIComponent(status.tempCsvExternalUrl)}`);
+  const csvText = await csvRes.text();
+  return parseCSV(csvText);
+}
+
+// Aggregate raw transaction rows into per-staff service/product totals
+function aggregatePhorestData(rows) {
+  const byStaff = {};
+  rows.forEach(row => {
+    const staffName = row["Staff Name"] || row["StaffName"] || row["Staff"];
+    if (!staffName) return;
+    if (!byStaff[staffName]) byStaff[staffName] = { serviceSales: 0, productSales: 0 };
+    const category = (row["Category"] || row["Type"] || "").toLowerCase();
+    const amount = parseFloat(row["Price"] || row["Amount"] || row["Total"] || 0) || 0;
+    if (category.includes("product") || category.includes("retail")) {
+      byStaff[staffName].productSales += amount;
+    } else {
+      byStaff[staffName].serviceSales += amount;
+    }
+  });
+  return byStaff;
+}
+
+
 function ScoreView({ roster, allScores, onScore }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
+  const [phorestData, setPhorestData] = useState(null);
+  const [pulling, setPulling] = useState(false);
+  const [pullError, setPullError] = useState(null);
   const wk = currentWeekKey();
   const activeTeam = roster.filter(m => m.active);
+
+  const handlePullPhorest = async () => {
+    setPulling(true);
+    setPullError(null);
+    try {
+      const rows = await pullPhorestWeek(wk);
+      const aggregated = aggregatePhorestData(rows);
+      setPhorestData(aggregated);
+    } catch (err) {
+      setPullError(err.message);
+    } finally {
+      setPulling(false);
+    }
+  };
 
   if (sel) {
     const cards = getMemberCards(sel);
@@ -396,8 +527,32 @@ function ScoreView({ roster, allScores, onScore }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 18px" }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Scoring week of {weekLabelFromKey(wk)}</div>
-        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Reviewed Thursday · Covers previous Mon–Sun · Pull Phorest data before scoring</div>
+        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Reviewed Thursday · Covers previous Mon–Sun</div>
       </div>
+
+      <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 12, padding: "14px 18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.steel }}>📊 Phorest Data</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Pull last week's Service & Product Sales per stylist</div>
+          </div>
+          <button onClick={handlePullPhorest} disabled={pulling} style={{ padding: "8px 16px", borderRadius: 8, background: pulling ? C.border : C.steel, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: pulling ? "default" : "pointer" }}>
+            {pulling ? "Pulling... (~20s)" : "Pull Phorest Data"}
+          </button>
+        </div>
+        {pullError && <div style={{ marginTop: 10, fontSize: 12, color: C.pink, fontWeight: 600 }}>⚠ {pullError}</div>}
+        {phorestData && !pullError && (
+          <div style={{ marginTop: 12, borderTop: `1px solid ${C.steel}33`, paddingTop: 10 }}>
+            <div style={{ fontSize: 11, color: C.steel, fontWeight: 700, marginBottom: 6 }}>✓ Pulled — reference these while scoring:</div>
+            {Object.entries(phorestData).map(([name, data]) => (
+              <div key={name} style={{ fontSize: 11, color: C.ink, padding: "3px 0" }}>
+                <strong>{name}:</strong> Service ${data.serviceSales.toFixed(2)} · Product ${data.productSales.toFixed(2)}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {activeTeam.map(member => {
         const cards = getMemberCards(member);
         const pts = getMemberWeekPts(member, allScores?.[wk] || {});
@@ -613,6 +768,8 @@ export default function RefineryApp() {
   const [allScores, setAllScores] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
+  const [unlocked, setUnlocked] = useState(false);
+  const [pinPromptFor, setPinPromptFor] = useState(null);
 
   useEffect(() => {
     async function loadRoster() {
@@ -683,8 +840,10 @@ export default function RefineryApp() {
     }
   };
 
-  const NavBtn = ({ id, label }) => (
-    <button onClick={() => setView(id)} style={{ padding: "8px 16px", borderRadius: "8px 8px 0 0", background: view === id ? C.warm : "transparent", color: view === id ? C.ink : "#aaa", border: "none", fontWeight: view === id ? 700 : 500, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>
+  const NavBtn = ({ id, label, locked }) => (
+    <button onClick={() => { if (locked && !unlocked) { setPinPromptFor(id); } else { setView(id); } }} style={{ padding: "8px 16px", borderRadius: "8px 8px 0 0", background: view === id ? C.warm : "transparent", color: view === id ? C.ink : "#aaa", border: "none", fontWeight: view === id ? 700 : 500, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
+      {label}{locked && !unlocked && <span style={{ fontSize: 10 }}>🔒</span>}
+    </button>
   );
 
   if (loading) return (
@@ -706,12 +865,19 @@ export default function RefineryApp() {
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
-            <NavBtn id="score" label="Score This Week" />
+            <NavBtn id="score" label="Score This Week" locked />
             <NavBtn id="history" label="History & Tracking" />
-            <NavBtn id="roster" label="Roster" />
+            <NavBtn id="roster" label="Roster" locked />
           </div>
         </div>
       </div>
+      {pinPromptFor && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPinPromptFor(null)}>
+          <div onClick={e => e.stopPropagation()}>
+            <PinLock onUnlock={() => { setUnlocked(true); setView(pinPromptFor); setPinPromptFor(null); }} />
+          </div>
+        </div>
+      )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
         {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} />}
         {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} />}
