@@ -23,13 +23,27 @@ const ROLE_OPTIONS = [
 
 const LEADERSHIP_ROLES = ["team_leader", "manager", "gm", "owner"];
 
+// Individual weekly targets — Q3 2026
+const STYLIST_TARGETS = {
+  ali:     { serviceWeekly: 2221, productWeekly: 69 },
+  alexis:  { serviceWeekly: 2135, productWeekly: 69 },
+  darby:   { serviceWeekly: 2014, productWeekly: 69 },
+  katie:   { serviceWeekly: 776,  productWeekly: 69 },
+  payton:  { serviceWeekly: 1331, productWeekly: 69 },
+  savanna: { serviceWeekly: 1727, productWeekly: 69 },
+  teagan:  { serviceWeekly: 2191, productWeekly: 69 },
+  vanessa: { serviceWeekly: 2123, productWeekly: 69 },
+  vicki:   { serviceWeekly: 1331, productWeekly: 69 },
+};
+const PPH_FLOOR = 68.22;
+
 const SCORECARDS = {
   stylist: {
     label: "Stylist",
     metrics: [
-      { id: "service_sales",    label: "Service Sales vs Personal Goal",       desc: "0 = <90% · 1 = 90–99% · 2 = 100%+",                          source: "Phorest"   },
-      { id: "product_sales",    label: "Product Sales vs Personal Goal",       desc: "0 = <90% · 1 = 90–99% · 2 = 100%+",                          source: "Phorest"   },
-      { id: "pph",              label: "PPH vs Personal Target",               desc: "0 = below target · 1 = at target · 2 = target +5%",           source: "Phorest"   },
+      { id: "service_sales",    label: "Service Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest"   },
+      { id: "product_sales",    label: "Product Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest"   },
+      { id: "pph",              label: "PPH",                                   desc: "Floor target $68.22 · 0 = below · 1 = at floor · 2 = floor +5%", source: "Phorest"   },
       { id: "rebooking",        label: "Rebooking Rate",                       desc: "0 = <80% · 1 = 80–84% · 2 = 85%+",                           source: "Phorest"   },
       { id: "retention",        label: "Retention Rate (90-day rolling)",      desc: "0 = <75% · 1 = 75–84% · 2 = 85%+ · Grace period: 90 days",   source: "Phorest",  grace: true },
       { id: "active_guests",    label: "Active Guest Count",                   desc: "0 = <70 · 1 = 70–84 · 2 = 85+",                              source: "Phorest"   },
@@ -60,7 +74,7 @@ const SCORECARDS = {
   manager: {
     label: "Manager",
     metrics: [
-      { id: "pink_green_ratio", label: "Pink to Green Ratio (vs prior week)",  desc: "0 = more pink than last week · 1 = same or fewer · 2 = zero pink", source: "Scorecard" },
+      { id: "pink_green_ratio", label: "Pink to Green Ratio (week over week)", desc: "0 = more pink than last week · 1 = same or fewer · 2 = zero pink", source: "Scorecard" },
       { id: "utilization",      label: "Utilization Rate (shop average)",      desc: "0 = <75% · 1 = 75–84% · 2 = 85–89%",                         source: "Phorest"   },
       { id: "infractions",      label: "Infraction Rate",                      desc: "0 = any infractions · 1 = zero · 2 = zero + proactive reinforcement documented", source: "Manual" },
       { id: "retail_gap",       label: "Retail Gap to Target",                 desc: "0 = moving away from 10% goal · 1 = holding/improving · 2 = +0.5%+ vs last week", source: "Phorest" },
@@ -71,8 +85,8 @@ const SCORECARDS = {
   gm: {
     label: "Payton",
     metrics: [
-      { id: "pink_trend",       label: "Pink Team Trend (week over week)",     desc: "0 = more pink than last week · 1 = same or fewer than last week · 2 = zero pink this week", source: "Scorecard" },
-      { id: "team_kpi_avg",     label: "Team KPI Average",                     desc: "0 = <50% · 1 = 50–74% · 2 = 75%+",                           source: "Scorecard" },
+      { id: "pink_trend",       label: "Pink Team Trend (month over month)",   desc: "0 = more pink than last month · 1 = same or fewer than last month · 2 = zero pink this month", source: "Scorecard" },
+      { id: "team_kpi_avg",     label: "Team KPI Average",                     desc: "0 = <50% · 1 = 50–74% · 2 = 75%+ · Auto-calculated from this week's scores", source: "Scorecard" },
       { id: "open_issues",      label: "Open Issues",                          desc: "0 = untouched/rolled over · 1 = resolved or in progress · 2 = resolved + system created to prevent recurrence", source: "Manual" },
       { id: "hiring",           label: "Hiring Pipeline",                      desc: "0 = 0 interviews/mo · 1 = 1/mo · 2 = 2+/mo",                 source: "Manual"    },
       { id: "coaching_outcomes",label: "Coaching Outcomes (prior week)",       desc: "0 = coached but no change or got worse · 1 = measurable improvement but still pink · 2 = moved to green", source: "Scorecard" },
@@ -86,7 +100,7 @@ const SCORECARDS = {
       { id: "profit_margin",    label: "Operating Profit Margin",              desc: "0 = below target · 1 = at target · 2 = above target",         source: "Financial" },
       { id: "payroll_pct",      label: "Payroll %",                            desc: "0 = above target % · 1 = at target % · 2 = below target %",   source: "Financial" },
       { id: "engagement",       label: "Employee Engagement",                  desc: "0 = any involuntary turnover · 1 = zero turnover · 2 = zero + culture activity done", source: "Manual" },
-      { id: "book_control",     label: "Book Control Decisions",               desc: "0 = any stylist overdue · 1 = all triggers monitored · 2 = all acted on same week", source: "Scorecard" },
+      { id: "culture_initiatives", label: "Culture Initiatives Completed",     desc: "0 = none this month · 1 = 1 completed · 2 = 2+ completed",   source: "Manual"    },
       { id: "leadership_obj",   label: "Leadership Objective Attainment",      desc: "0 = behind · 1 = on track · 2 = ahead + next initiative identified", source: "Manual" },
     ],
   },
@@ -107,6 +121,7 @@ const SCORE_COLOR = { 0: C.pink, 1: C.gold, 2: C.green };
 const MAX_PTS = 12;
 const GREEN_MIN = 6;
 const START_DATE = "2026-06-23";
+
 function getMondayOf(date) {
   const d = new Date(date);
   const day = d.getDay();
@@ -143,7 +158,7 @@ function groupByQuarter(keys) {
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
 function getMemberCards(member) {
-  return ["team_leader","manager","gm","owner"].includes(member.role) ? ["stylist", member.role] : [member.role];
+  return LEADERSHIP_ROLES.includes(member.role) ? ["stylist", member.role] : [member.role];
 }
 function calcCardPts(cardType, scores) {
   const card = SCORECARDS[cardType];
@@ -158,16 +173,30 @@ function getMemberWeekPts(member, weekScores) {
 function getMemberCumulativePts(member, allScores) {
   return Object.values(allScores).reduce((t, ws) => t + getMemberWeekPts(member, ws).reduce((a, p) => a + (p ?? 0), 0), 0);
 }
+// Auto-calculate team KPI average % for a given week
+function calcTeamKpiAvgPct(activeTeam, weekScores) {
+  const totals = activeTeam.map(m => {
+    const pts = getMemberWeekPts(m, weekScores);
+    const validPts = pts.filter(p => p !== null);
+    if (validPts.length === 0) return null;
+    return validPts.reduce((a, p) => a + p, 0) / validPts.length;
+  }).filter(v => v !== null);
+  if (totals.length === 0) return null;
+  const avgPts = totals.reduce((a, v) => a + v, 0) / totals.length;
+  return Math.round((avgPts / MAX_PTS) * 100);
+}
 
 function Avatar({ name, size = 38 }) {
   const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   return <div style={{ width: size, height: size, borderRadius: "50%", background: C.goldLight, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: size * 0.34, color: C.gold, flexShrink: 0 }}>{initials}</div>;
 }
+
 function StatusPill({ pts }) {
   if (pts === null) return <span style={{ fontSize: 11, color: C.muted, padding: "2px 8px", borderRadius: 20, border: `1px solid ${C.border}` }}>—</span>;
   const g = pts >= GREEN_MIN;
   return <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: g ? C.greenLight : C.pinkLight, color: g ? C.green : C.pink }}>{g ? "🟢" : "🔴"} {pts}pts</span>;
 }
+
 function ScoreBtn({ val, current, onChange }) {
   const active = current === val;
   return <button onClick={() => onChange(val)} style={{ width: 34, height: 34, borderRadius: 8, border: `2px solid ${active ? SCORE_COLOR[val] : C.border}`, background: active ? SCORE_COLOR[val] : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.12s", flexShrink: 0 }}>{val}</button>;
@@ -178,6 +207,8 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
   const pts = calcCardPts(cardType, scores);
   const filled = card.metrics.filter(m => m.handicap || scores?.[m.id] !== undefined).length;
   const isGreen = pts !== null && pts >= GREEN_MIN;
+  const targets = cardType === "stylist" ? STYLIST_TARGETS[member.id] : null;
+
   return (
     <div style={{ background: C.white, borderRadius: 12, border: `1.5px solid ${C.border}`, overflow: "hidden" }}>
       <div style={{ padding: "16px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -190,6 +221,15 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
           <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{filled}/{card.metrics.length} scored · {pts ?? "—"}/{MAX_PTS} pts</div>
         </div>
       </div>
+
+      {targets && (
+        <div style={{ padding: "10px 20px", background: C.steelLight, borderBottom: `1.5px solid ${C.border}`, fontSize: 11, color: C.steel, display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <span><strong>Weekly Service Target:</strong> ${targets.serviceWeekly.toLocaleString()}</span>
+          <span><strong>Weekly Product Target:</strong> ${targets.productWeekly}</span>
+          <span><strong>PPH Floor:</strong> ${PPH_FLOOR}</span>
+        </div>
+      )}
+
       <div style={{ padding: "0 20px" }}>
         {card.metrics.map((m, i) => (
           <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: i < card.metrics.length - 1 ? `1px solid ${C.border}` : "none" }}>
@@ -217,19 +257,81 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
   );
 }
 
+// ── COMPANY SCORECARD ─────────────────────────────────────────────────────────
+function CompanyScorecard() {
+  return (
+    <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "14px 20px", background: C.ink }}>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</div>
+        <div style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Company Scorecard — Q3 2026</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 1, background: C.border }}>
+        {[
+          { label: "Service Sales Target", val: "$58,315.72", sub: "monthly" },
+          { label: "Product Sales Target", val: "$3,900", sub: "monthly · 6.7% of service" },
+          { label: "Shop PPH Target", val: "$68.22", sub: "floor minimum" },
+          { label: "Utilization Target", val: "80–90%", sub: "shop average" },
+        ].map(s => (
+          <div key={s.label} style={{ background: C.white, padding: "14px 16px" }}>
+            <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: C.ink, marginTop: 4 }}>{s.val}</div>
+            <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{s.sub}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TeamStatusList({ title, icon, members, color, bg }) {
+  const sorted = [...members].sort((a, b) => (b.totalPts ?? 0) - (a.totalPts ?? 0));
+  return (
+    <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "10px 20px", background: bg, borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <span>{icon}</span>
+        <div style={{ fontSize: 13, fontWeight: 700, color }}>{title} ({sorted.length})</div>
+      </div>
+      {sorted.length === 0 ? (
+        <div style={{ padding: "16px 20px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>No one here this week</div>
+      ) : (
+        sorted.map((m, i) => (
+          <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "10px 20px", gap: 10, borderBottom: i < sorted.length - 1 ? `1px solid ${C.border}` : "none" }}>
+            <div style={{ width: 18, fontSize: 11, fontWeight: 700, color: C.muted, textAlign: "center" }}>{i + 1}</div>
+            <Avatar name={m.name} size={30} />
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color }}>{m.totalPts ?? "—"} pts</div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function Dashboard({ roster, allScores }) {
   const activeTeam = roster.filter(m => m.active);
   const wk = currentWeekKey();
   const ws = allScores[wk] || {};
-  const pinkCount = activeTeam.filter(m => getMemberWeekPts(m, ws).some(p => p !== null && p < GREEN_MIN)).length;
-  const greenCount = activeTeam.filter(m => { const pts = getMemberWeekPts(m, ws); return pts.every(p => p === null || p >= GREEN_MIN) && pts.some(p => p !== null); }).length;
+
+  const withTotals = activeTeam.map(m => {
+    const pts = getMemberWeekPts(m, ws);
+    const validPts = pts.filter(p => p !== null);
+    const totalPts = validPts.length > 0 ? validPts.reduce((a, p) => a + p, 0) : null;
+    const isPink = pts.some(p => p !== null && p < GREEN_MIN);
+    const isGreen = pts.every(p => p === null || p >= GREEN_MIN) && pts.some(p => p !== null);
+    return { ...m, totalPts, isPink, isGreen };
+  });
+
+  const pinkMembers = withTotals.filter(m => m.isPink);
+  const greenMembers = withTotals.filter(m => m.isGreen);
+  const pinkCount = pinkMembers.length;
   const flag = pinkCount >= 4 ? "red" : pinkCount >= 2 ? "yellow" : "clear";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
         {[
           { label: "Active Team", val: activeTeam.length, color: C.ink },
-          { label: "Green Team", val: greenCount, color: C.green },
+          { label: "Green Team", val: greenMembers.length, color: C.green },
           { label: "Pink Team", val: pinkCount, color: C.pink },
           { label: "Team Flag", val: flag === "red" ? "🔴 Red" : flag === "yellow" ? "🟡 Yellow" : "✅ Clear", color: flag === "red" ? C.pink : flag === "yellow" ? C.gold : C.green },
         ].map(s => (
@@ -239,24 +341,14 @@ function Dashboard({ roster, allScores }) {
           </div>
         ))}
       </div>
-      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}` }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Team Snapshot — {weekLabelFromKey(wk)}</div>
-        </div>
-        {activeTeam.map((m, i) => {
-          const pts = getMemberWeekPts(m, ws);
-          return (
-            <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "11px 20px", gap: 12, borderBottom: i < activeTeam.length - 1 ? `1px solid ${C.border}` : "none", flexWrap: "wrap" }}>
-              <Avatar name={m.name} />
-              <div style={{ flex: 1, minWidth: 100 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
-                <div style={{ fontSize: 11, color: C.muted }}>{getMemberCards(m).map(r => SCORECARDS[r].label).join(" + ")}</div>
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pts.map((p, j) => <StatusPill key={j} pts={p} />)}</div>
-            </div>
-          );
-        })}
-      </div>
+
+      <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)}</div>
+
+      <TeamStatusList title="Green Team" icon="🟢" members={greenMembers} color={C.green} bg={C.greenLight} />
+      <TeamStatusList title="Pink Team" icon="🔴" members={pinkMembers} color={C.pink} bg={C.pinkLight} />
+
+      <CompanyScorecard />
+
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 12, padding: "16px 20px" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.steel, marginBottom: 8 }}>📋 Book Control Trigger</div>
         <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.9 }}>
@@ -274,6 +366,7 @@ function ScoreView({ roster, allScores, onScore }) {
   const [card, setCard] = useState(null);
   const wk = currentWeekKey();
   const activeTeam = roster.filter(m => m.active);
+
   if (sel) {
     const cards = getMemberCards(sel);
     return (
@@ -287,10 +380,18 @@ function ScoreView({ roster, allScores, onScore }) {
             </button>
           ))}
         </div>
-        {card && <ScorecardPanel member={sel} cardType={card} scores={allScores?.[wk]?.[sel.id]?.[card]} onScore={(mid, val) => onScore(wk, sel.id, card, mid, val)} />}
+        {card && (
+          <ScorecardPanel
+            member={sel}
+            cardType={card}
+            scores={allScores?.[wk]?.[sel.id]?.[card]}
+            onScore={(mid, val) => onScore(wk, sel.id, card, mid, val)}
+          />
+        )}
       </div>
     );
   }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 18px" }}>
@@ -315,6 +416,7 @@ function ScoreView({ roster, allScores, onScore }) {
     </div>
   );
 }
+
 function HistoryView({ roster, allScores }) {
   const activeTeam = roster.filter(m => m.active);
   const [mode, setMode] = useState("weekly");
@@ -322,9 +424,11 @@ function HistoryView({ roster, allScores }) {
   const allWeeks = useMemo(() => allWeeksSince(START_DATE), []);
   const qGroups = useMemo(() => groupByQuarter(allWeeks), [allWeeks]);
   const qKeys = Object.keys(qGroups).sort().reverse();
+
   const ModeBtn = ({ id, label }) => (
     <button onClick={() => setMode(id)} style={{ padding: "7px 16px", borderRadius: 20, border: `1.5px solid ${mode === id ? C.gold : C.border}`, background: mode === id ? C.goldLight : C.white, color: mode === id ? C.gold : C.muted, fontWeight: mode === id ? 700 : 500, fontSize: 12, cursor: "pointer" }}>{label}</button>
   );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -332,6 +436,7 @@ function HistoryView({ roster, allScores }) {
         <ModeBtn id="quarterly" label="Quarterly" />
         <ModeBtn id="cumulative" label="Cumulative / Bonus Pool" />
       </div>
+
       {mode === "weekly" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -358,6 +463,7 @@ function HistoryView({ roster, allScores }) {
           </div>
         </div>
       )}
+
       {mode === "quarterly" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {qKeys.map(qk => {
@@ -392,6 +498,7 @@ function HistoryView({ roster, allScores }) {
           })}
         </div>
       )}
+
       {mode === "cumulative" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ background: C.goldLight, border: `1.5px solid ${C.gold}44`, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: C.gold, fontWeight: 600 }}>
@@ -431,8 +538,10 @@ function RosterView({ roster, onRosterChange }) {
   const [form, setForm] = useState({ name: "", role: "stylist" });
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState({});
+
   const active = roster.filter(m => m.active);
   const inactive = roster.filter(m => !m.active);
+
   const MemberRow = ({ m }) => {
     const isEditing = editId === m.id;
     return (
@@ -464,6 +573,7 @@ function RosterView({ roster, onRosterChange }) {
       </div>
     );
   };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: C.steel, fontWeight: 600 }}>
@@ -611,4 +721,3 @@ export default function RefineryApp() {
     </div>
   );
 }
- 
