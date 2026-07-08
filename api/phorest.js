@@ -1,7 +1,4 @@
 // /api/phorest.js
-// Serverless function that proxies requests to the Phorest API.
-// Keeps credentials server-side, out of the browser.
-
 const PHOREST_USERNAME = "global/refinerynb@gmail.com";
 const PHOREST_PASSWORD = "%GE6rK2N%@WL";
 const BUSINESS_ID = "F2SPxegRrmVYTXnkIonN5A";
@@ -23,7 +20,6 @@ export default async function handler(req, res) {
   console.log("Phorest API called, action:", action, "method:", req.method);
 
   try {
-    // Step 1: create a CSV export job for a date range
     if (action === "create-job" && req.method === "POST") {
       const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
       const { startFilter, finishFilter } = body || {};
@@ -43,7 +39,6 @@ export default async function handler(req, res) {
       return res.status(response.status).json(data);
     }
 
-    // Step 2: poll job status
     if (action === "check-job" && req.method === "GET") {
       const { jobId } = req.query;
       const response = await fetch(
@@ -54,7 +49,6 @@ export default async function handler(req, res) {
       return res.status(response.status).json(data);
     }
 
-    // Step 3: fetch and return the raw CSV text once job is DONE
     if (action === "fetch-csv" && req.method === "GET") {
       const { url } = req.query;
       const response = await fetch(url);
