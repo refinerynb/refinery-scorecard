@@ -413,13 +413,32 @@ function getPriorWeekRange(weekKey) {
   return { startFilter: fmt(monday), finishFilter: fmt(sunday) };
 }
 
+function parseCSVLine(line) {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
 function parseCSV(text) {
   const lines = text.split("\n").filter(l => l.trim());
   if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map(h => h.trim().replace(/"/g, ""));
+  const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/^"|"$/g, ""));
   return lines.slice(1).map(line => {
-    // naive CSV split — Phorest CSVs are typically comma-delimited without embedded commas in key fields
-    const cols = line.split(",").map(c => c.trim().replace(/"/g, ""));
+    const cols = parseCSVLine(line).map(c => c.trim().replace(/^"|"$/g, ""));
     const row = {};
     headers.forEach((h, i) => { row[h] = cols[i]; });
     return row;
@@ -460,14 +479,17 @@ async function pullPhorestWeek(weekKey) {
 function aggregatePhorestData(rows) {
   const byStaff = {};
   rows.forEach(row => {
-    const staffName = row["Staff Name"] || row["StaffName"] || row["Staff"];
+    const first = row["staff_first_name"];
+    const last = row["staff_last_name"];
+    if (!first && !last) return;
+    const staffName = `${first || ""} ${last || ""}`.trim();
     if (!staffName) return;
     if (!byStaff[staffName]) byStaff[staffName] = { serviceSales: 0, productSales: 0 };
-    const category = (row["Category"] || row["Type"] || "").toLowerCase();
-    const amount = parseFloat(row["Price"] || row["Amount"] || row["Total"] || 0) || 0;
+    const category = (row["item_type"] || "").toLowerCase();
+    const amount = parseFloat(row["price"] || row["item_price"] || row["total"] || 0) || 0;
     if (category.includes("product") || category.includes("retail")) {
       byStaff[staffName].productSales += amount;
-    } else {
+    } else if (category.includes("service")) {
       byStaff[staffName].serviceSales += amount;
     }
   });
@@ -545,11 +567,11 @@ function ScoreView({ roster, allScores, onScore }) {
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 12, padding: "14px 18px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.steel }}>📊 Phorest Data</div>
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Pull Service & Product Sales for a selected week</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.steel }}>📊 Phorest Data — Service & Product Sales</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Automated. Rebooking, Retention, Utilization & No-Shows still pulled manually from Phorest Insights.</div>
           </div>
           <button onClick={handlePullPhorest} disabled={pulling} style={{ padding: "8px 16px", borderRadius: 8, background: pulling ? C.border : C.steel, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: pulling ? "default" : "pointer" }}>
-            {pulling ? "Pulling... (~20s)" : "Pull Phorest Data"}
+            {pulling ? "Pulling... (~20s)" : "Pull Sales Data"}
           </button>
         </div>
         <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -562,7 +584,7 @@ function ScoreView({ roster, allScores, onScore }) {
         {pullError && <div style={{ marginTop: 10, fontSize: 12, color: C.pink, fontWeight: 600 }}>⚠ {pullError}</div>}
         {phorestData && !pullError && (
           <div style={{ marginTop: 12, borderTop: `1px solid ${C.steel}33`, paddingTop: 10 }}>
-            <div style={{ fontSize: 11, color: C.steel, fontWeight: 700, marginBottom: 6 }}>✓ Pulled {weekLabelFromKey(pullWeek)} — reference these while scoring:</div>
+            <div style={{ fontSize: 11, color: C.steel, fontWeight: 700, marginBottom: 6 }}>✓ Pulled {weekLabelFromKey(pullWeek)} — Service & Product totals per stylist:</div>
             {Object.keys(phorestData).length === 0 ? (
               <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic" }}>No transactions found for this week</div>
             ) : (
@@ -574,6 +596,10 @@ function ScoreView({ roster, allScores, onScore }) {
             )}
           </div>
         )}
+      </div>
+
+      <div style={{ background: C.goldLight, border: `1.5px solid ${C.gold}44`, borderRadius: 10, padding: "10px 16px", fontSize: 11, color: C.gold, fontWeight: 600 }}>
+        📋 Pull manually from Phorest → Manager → Reports → Insights: Rebooking Rate, Utilization (Staff Performance dashboard) · Retention (Client Retention dashboard) · No-Shows (Reports → Clients)
       </div>
 
       {activeTeam.map(member => {
