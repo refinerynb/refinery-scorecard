@@ -54,6 +54,30 @@ export default async function handler(req, res) {
       return res.status(response.status).json(data);
     }
 
+    // Get appointments for a date range (max 1 month)
+    if (action === "appointments" && req.method === "GET") {
+      const { fromDate, toDate } = req.query;
+      const url = `${BASE_URL}/business/${BUSINESS_ID}/branch/${BRANCH_ID}/appointment?from_date=${fromDate}&to_date=${toDate}&size=500`;
+      console.log("Fetching appointments:", fromDate, toDate);
+      const response = await fetch(url, { headers: { Authorization: authHeader() } });
+      const text = await response.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+      return res.status(response.status).json(data);
+    }
+
+    // Get staff work timetables for a date range (max 1 month) — gives rostered hours
+    if (action === "worktimetable" && req.method === "GET") {
+      const { fromDate, toDate } = req.query;
+      const url = `${BASE_URL}/business/${BUSINESS_ID}/branch/${BRANCH_ID}/staff/worktimetable?from_date=${fromDate}&to_date=${toDate}`;
+      console.log("Fetching worktimetable:", fromDate, toDate);
+      const response = await fetch(url, { headers: { Authorization: authHeader() } });
+      const text = await response.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+      return res.status(response.status).json(data);
+    }
+
     // Step 3: fetch and return the raw CSV text once job is DONE
     if (action === "fetch-csv" && req.method === "GET") {
       const { url } = req.query;
