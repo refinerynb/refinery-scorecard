@@ -1,11 +1,7 @@
-// /api/phorest.js
-// Serverless function that proxies requests to the Phorest API.
-// Keeps credentials server-side, out of the browser.
-
-const PHOREST_USERNAME = "global/refinerynb@gmail.com";
-const PHOREST_PASSWORD = "%GE6rK2N%@WL";
-const BUSINESS_ID = "F2SPxegRrmVYTXnkIonN5A";
-const BRANCH_ID = "jmr-AoRuqqt58C8fNP5hLg";
+const PHOREST_USERNAME = process.env.PHOREST_USERNAME;
+const PHOREST_PASSWORD = process.env.PHOREST_PASSWORD;
+const BUSINESS_ID = process.env.PHOREST_BUSINESS_ID;
+const BRANCH_ID = process.env.PHOREST_BRANCH_ID;
 const BASE_URL = "https://platform-us.phorest.com/third-party-api-server/api";
 
 function authHeader() {
