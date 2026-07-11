@@ -486,7 +486,8 @@ function aggregatePhorestData(rows) {
     if (!staffName) return;
     if (!byStaff[staffName]) byStaff[staffName] = { serviceSales: 0, productSales: 0 };
     const category = (row["item_type"] || "").toLowerCase();
-    const amount = parseFloat(row["price"] || row["item_price"] || row["total"] || 0) || 0;
+    const amount = parseFloat(String(row["net_total_amount"] || row["total_amount"] || "0").replace(/[^0-9.\-]/g, "")) || 0;
+
     if (category.includes("product") || category.includes("retail")) {
       byStaff[staffName].productSales += amount;
     } else if (category.includes("service")) {
