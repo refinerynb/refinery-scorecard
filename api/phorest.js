@@ -83,7 +83,8 @@ export default async function handler(req, res) {
       const { url } = req.query;
       const response = await fetch(url);
       const text = await response.text();
-      console.log("CSV first 500 chars:", text.slice(0, 500));
+      console.log("FULL CSV HEADER:", text.split("\n")[0], "|| ROW1:", text.split("\n")[1]);
+
       console.log("CSV total length:", text.length);
       res.setHeader("Content-Type", "text/plain");
       return res.status(200).send(text);
