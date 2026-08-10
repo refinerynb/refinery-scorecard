@@ -115,6 +115,26 @@ const SCORECARDS = {
       { id: "model_conversion", label: "Model-to-Guest Conversion",            desc: "0 = <70% · 1 = 70% · 2 = >70%",                              source: "Manual"    },
     ],
   },
+  // Core Value Award — rotating monthly assignment (not a permanent role).
+  // Scored Yes/No weekly and accumulates over the month.
+  // Award only: does NOT feed cumulative / bonus pool or Green–Pink team status.
+  core_value: {
+    label: "Core Value Award",
+    yesNo: true,
+    award: true,
+    metrics: [
+      { id: "service_times",      label: "Service times monitored",                 desc: "Yes / No", source: "Manual" },
+      { id: "guest_ready",        label: "Shop is guest ready at open",             desc: "Yes / No", source: "Manual" },
+      { id: "cleanliness",        label: "Cleanliness standards upheld",            desc: "Yes / No", source: "Manual" },
+      { id: "sanitation",         label: "Sanitation protocols upheld",             desc: "Yes / No", source: "Manual" },
+      { id: "closing",            label: "Closing procedures followed",             desc: "Yes / No", source: "Manual" },
+      { id: "brand_env",          label: "Shop environment reflects brand",         desc: "Yes / No", source: "Manual" },
+      { id: "service_standards",  label: "Service standards upheld",                desc: "Yes / No", source: "Manual" },
+      { id: "leadership_comm",    label: "Clear communication with leadership team", desc: "Yes / No", source: "Manual" },
+      { id: "guest_satisfaction", label: "Guest satisfaction maintained",           desc: "Yes / No", source: "Manual" },
+      { id: "huddle_meeting",     label: "Team huddle & meeting preparation",       desc: "Yes / No", source: "Manual" },
+    ],
+  },
 };
 
 const SCORE_COLOR = { 0: C.pink, 1: C.gold, 2: C.green };
@@ -199,8 +219,33 @@ function groupByQuarter(keys) {
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
+// ── month helpers (Core Value Award) ─────────────────────────────
+function currentMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthKeyOfWeek(weekKey) { return weekKey.slice(0, 7); } // month of that week's Monday
+function monthLabel(mk) {
+  const [y, m] = mk.split("-");
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+function monthsFromWeeks(weekKeys) {
+  const seen = [];
+  weekKeys.forEach(wk => { const mk = monthKeyOfWeek(wk); if (!seen.includes(mk)) seen.push(mk); });
+  return seen; // newest-first (allWeeksSince is reversed)
+}
+
 function getMemberCards(member) {
   return LEADERSHIP_ROLES.includes(member.role) ? ["stylist", member.role] : [member.role];
+}
+// The single card that counts toward cumulative / bonus pool:
+// Stylist for stylists + all leaders; own card for Front Desk / Apprentice.
+// Leadership overlay and Core Value are excluded by construction.
+function getBonusCard(member) { return getMemberCards(member)[0]; }
+
+function cardMax(cardType) {
+  const c = SCORECARDS[cardType];
+  return c.metrics.length * (c.yesNo ? 1 : 2);
 }
 function calcCardPts(cardType, scores) {
   const card = SCORECARDS[cardType];
@@ -212,10 +257,26 @@ function calcCardPts(cardType, scores) {
 function getMemberWeekPts(member, weekScores) {
   return getMemberCards(member).map(r => calcCardPts(r, weekScores?.[member.id]?.[r]));
 }
-function getMemberCumulativePts(member, allScores) {
-  return Object.values(allScores).reduce((t, ws) => t + getMemberWeekPts(member, ws).reduce((a, p) => a + (p ?? 0), 0), 0);
+// Bonus-pool math: base card only.
+function getMemberBonusWeekPts(member, weekScores) {
+  const card = getBonusCard(member);
+  return calcCardPts(card, weekScores?.[member.id]?.[card]);
 }
-// Auto-calculate team KPI average % for a given week
+function getMemberCumulativePts(member, allScores) {
+  return Object.values(allScores).reduce((t, ws) => t + (getMemberBonusWeekPts(member, ws) ?? 0), 0);
+}
+// Core Value running total for a holder across a calendar month (null weeks count as 0).
+function monthCoreValueTotal(memberId, monthKey, allScores) {
+  return Object.keys(allScores)
+    .filter(wk => monthKeyOfWeek(wk) === monthKey)
+    .reduce((t, wk) => t + (calcCardPts("core_value", allScores[wk]?.[memberId]?.core_value) ?? 0), 0);
+}
+function monthCoreValueWeeks(memberId, monthKey, allScores) {
+  return Object.keys(allScores)
+    .filter(wk => monthKeyOfWeek(wk) === monthKey)
+    .filter(wk => calcCardPts("core_value", allScores[wk]?.[memberId]?.core_value) !== null).length;
+}
+// Auto-calculate team KPI average % for a given week (GM card metric)
 function calcTeamKpiAvgPct(activeTeam, weekScores) {
   const totals = activeTeam.map(m => {
     const pts = getMemberWeekPts(m, weekScores);
@@ -229,7 +290,7 @@ function calcTeamKpiAvgPct(activeTeam, weekScores) {
 }
 
 function Avatar({ name, size = 38 }) {
-  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  const initials = (name || "").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   return <div style={{ width: size, height: size, borderRadius: "50%", background: C.goldLight, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: size * 0.34, color: C.gold, flexShrink: 0 }}>{initials}</div>;
 }
 
@@ -239,17 +300,23 @@ function StatusPill({ pts }) {
   return <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: g ? C.greenLight : C.pinkLight, color: g ? C.green : C.pink }}>{g ? "🟢" : "🔴"} {pts}pts</span>;
 }
 
-function ScoreBtn({ val, current, onChange }) {
+function ScoreBtn({ val, label, current, onChange, color }) {
   const active = current === val;
-  return <button onClick={() => onChange(val)} style={{ width: 34, height: 34, borderRadius: 8, border: `2px solid ${active ? SCORE_COLOR[val] : C.border}`, background: active ? SCORE_COLOR[val] : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.12s", flexShrink: 0 }}>{val}</button>;
+  const c = color || SCORE_COLOR[val];
+  return <button onClick={() => onChange(val)} style={{ minWidth: 34, height: 34, padding: label ? "0 12px" : 0, borderRadius: 8, border: `2px solid ${active ? c : C.border}`, background: active ? c : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.12s", flexShrink: 0 }}>{label ?? val}</button>;
 }
 
 function ScorecardPanel({ member, cardType, scores, onScore }) {
   const card = SCORECARDS[cardType];
+  const yesNo = !!card.yesNo;
+  const maxPts = cardMax(cardType);
   const pts = calcCardPts(cardType, scores);
   const filled = card.metrics.filter(m => m.handicap || scores?.[m.id] !== undefined).length;
   const isGreen = pts !== null && pts >= GREEN_MIN;
   const targets = cardType === "stylist" ? STYLIST_TARGETS[member.id] : null;
+  const options = yesNo
+    ? [{ v: 0, l: "No", c: C.pink }, { v: 1, l: "Yes", c: C.green }]
+    : [{ v: 0, l: null, c: SCORE_COLOR[0] }, { v: 1, l: null, c: SCORE_COLOR[1] }, { v: 2, l: null, c: SCORE_COLOR[2] }];
 
   return (
     <div style={{ background: C.white, borderRadius: 12, border: `1.5px solid ${C.border}`, overflow: "hidden" }}>
@@ -259,8 +326,10 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
           <div style={{ fontSize: 20, fontWeight: 800, color: C.ink }}>{member.name}</div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <StatusPill pts={pts} />
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{filled}/{card.metrics.length} scored · {pts ?? "—"}/{MAX_PTS} pts</div>
+          {card.award
+            ? <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: C.goldLight, color: C.gold }}>{pts ?? "—"}/{maxPts} this week</span>
+            : <StatusPill pts={pts} />}
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{filled}/{card.metrics.length} scored · {pts ?? "—"}/{maxPts} pts</div>
         </div>
       </div>
 
@@ -286,14 +355,18 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
             </div>
             {m.handicap
               ? <div style={{ fontSize: 12, color: C.gold, fontWeight: 700, padding: "6px 10px", background: C.goldLight, borderRadius: 8, flexShrink: 0 }}>Auto 2</div>
-              : <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>{[0, 1, 2].map(v => <ScoreBtn key={v} val={v} current={scores?.[m.id]} onChange={v => onScore(m.id, v)} />)}</div>
+              : <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>{options.map(o => <ScoreBtn key={o.v} val={o.v} label={o.l} color={o.c} current={scores?.[m.id]} onChange={v => onScore(m.id, v)} />)}</div>
             }
           </div>
         ))}
       </div>
       <div style={{ padding: "12px 20px", background: C.warm, borderTop: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <div style={{ fontSize: 11, color: C.muted }}>Green = 6+ pts · Pink = under 6 pts · Max 12 pts</div>
-        {pts !== null && <div style={{ fontSize: 12, fontWeight: 700, color: isGreen ? C.green : C.pink }}>{isGreen ? "✓ Green Team" : "⚠ Pink Team — review next week"}</div>}
+        {card.award
+          ? <div style={{ fontSize: 11, color: C.muted }}>Yes = 1 · No = 0 · Max {maxPts} · Award only — excluded from bonus pool & Green/Pink status</div>
+          : <>
+              <div style={{ fontSize: 11, color: C.muted }}>Green = 6+ pts · Pink = under 6 pts · Max 12 pts</div>
+              {pts !== null && <div style={{ fontSize: 12, fontWeight: 700, color: isGreen ? C.green : C.pink }}>{isGreen ? "✓ Green Team" : "⚠ Pink Team — review next week"}</div>}
+            </>}
       </div>
     </div>
   );
@@ -325,8 +398,9 @@ function CompanyScorecard() {
   );
 }
 
-function TeamStatusList({ title, icon, members, color, bg }) {
-  const sorted = [...members].sort((a, b) => (b.totalPts ?? 0) - (a.totalPts ?? 0));
+// One labeled row per (member, card). Dual-role members appear once per card.
+function TeamStatusList({ title, icon, entries, color, bg }) {
+  const sorted = [...entries].sort((a, b) => (b.pts ?? 0) - (a.pts ?? 0));
   return (
     <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
       <div style={{ padding: "10px 20px", background: bg, borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
@@ -336,12 +410,15 @@ function TeamStatusList({ title, icon, members, color, bg }) {
       {sorted.length === 0 ? (
         <div style={{ padding: "16px 20px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>No one here this week</div>
       ) : (
-        sorted.map((m, i) => (
-          <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "10px 20px", gap: 10, borderBottom: i < sorted.length - 1 ? `1px solid ${C.border}` : "none" }}>
+        sorted.map((e, i) => (
+          <div key={e.key} style={{ display: "flex", alignItems: "center", padding: "10px 20px", gap: 10, borderBottom: i < sorted.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ width: 18, fontSize: 11, fontWeight: 700, color: C.muted, textAlign: "center" }}>{i + 1}</div>
-            <Avatar name={m.name} size={30} />
-            <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
-            <div style={{ fontSize: 13, fontWeight: 800, color }}>{m.totalPts ?? "—"} pts</div>
+            <Avatar name={e.name} size={30} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{e.name}</div>
+              <div style={{ fontSize: 11, color: C.muted }}>{e.cardLabel}</div>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 800, color }}>{e.pts ?? "—"} pts</div>
           </div>
         ))
       )}
@@ -349,32 +426,39 @@ function TeamStatusList({ title, icon, members, color, bg }) {
   );
 }
 
-function Dashboard({ roster, allScores }) {
+function Dashboard({ roster, allScores, holders }) {
   const activeTeam = roster.filter(m => m.active);
   const wk = currentWeekKey();
   const ws = allScores[wk] || {};
 
-  const withTotals = activeTeam.map(m => {
-    const pts = getMemberWeekPts(m, ws);
-    const validPts = pts.filter(p => p !== null);
-    const totalPts = validPts.length > 0 ? validPts.reduce((a, p) => a + p, 0) : null;
-    const isPink = pts.some(p => p !== null && p < GREEN_MIN);
-    const isGreen = pts.every(p => p === null || p >= GREEN_MIN) && pts.some(p => p !== null);
-    return { ...m, totalPts, isPink, isGreen };
-  });
+  // Per-card entries (role cards only — Core Value never appears in Green/Pink).
+  const entries = [];
+  activeTeam.forEach(m => getMemberCards(m).forEach(card => {
+    entries.push({ key: m.id + "|" + card, name: m.name, cardLabel: SCORECARDS[card].label, pts: calcCardPts(card, ws?.[m.id]?.[card]) });
+  }));
+  const greenEntries = entries.filter(e => e.pts !== null && e.pts >= GREEN_MIN);
+  const pinkEntries = entries.filter(e => e.pts !== null && e.pts < GREEN_MIN);
 
-  const pinkMembers = withTotals.filter(m => m.isPink);
-  const greenMembers = withTotals.filter(m => m.isGreen);
-  const pinkCount = pinkMembers.length;
-  const flag = pinkCount >= 4 ? "red" : pinkCount >= 2 ? "yellow" : "clear";
+  // Team Flag stays people-based: how many distinct members have any pink card.
+  const pinkMemberIds = new Set();
+  activeTeam.forEach(m => {
+    if (getMemberCards(m).some(card => { const p = calcCardPts(card, ws?.[m.id]?.[card]); return p !== null && p < GREEN_MIN; })) pinkMemberIds.add(m.id);
+  });
+  const flag = pinkMemberIds.size >= 4 ? "red" : pinkMemberIds.size >= 2 ? "yellow" : "clear";
+
+  const mk = currentMonthKey();
+  const holderId = holders?.[mk];
+  const holder = activeTeam.find(m => m.id === holderId);
+  const cvTotal = holder ? monthCoreValueTotal(holder.id, mk, allScores) : null;
+  const cvWeeks = holder ? monthCoreValueWeeks(holder.id, mk, allScores) : 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
         {[
           { label: "Active Team", val: activeTeam.length, color: C.ink },
-          { label: "Green Team", val: greenMembers.length, color: C.green },
-          { label: "Pink Team", val: pinkCount, color: C.pink },
+          { label: "Green (cards)", val: greenEntries.length, color: C.green },
+          { label: "Pink (cards)", val: pinkEntries.length, color: C.pink },
           { label: "Team Flag", val: flag === "red" ? "🔴 Red" : flag === "yellow" ? "🟡 Yellow" : "✅ Clear", color: flag === "red" ? C.pink : flag === "yellow" ? C.gold : C.green },
         ].map(s => (
           <div key={s.label} style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "14px 16px" }}>
@@ -384,10 +468,26 @@ function Dashboard({ roster, allScores }) {
         ))}
       </div>
 
-      <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)}</div>
+      <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)} · dual-role members are listed once per card</div>
 
-      <TeamStatusList title="Green Team" icon="🟢" members={greenMembers} color={C.green} bg={C.greenLight} />
-      <TeamStatusList title="Pink Team" icon="🔴" members={pinkMembers} color={C.pink} bg={C.pinkLight} />
+      <TeamStatusList title="Green Team" icon="🟢" entries={greenEntries} color={C.green} bg={C.greenLight} />
+      <TeamStatusList title="Pink Team" icon="🔴" entries={pinkEntries} color={C.pink} bg={C.pinkLight} />
+
+      {/* Core Value Award — separate from Green/Pink and the bonus pool */}
+      <div style={{ background: C.goldLight, border: `1.5px solid ${C.gold}66`, borderRadius: 12, padding: "16px 20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>Core Value Award · {monthLabel(mk)}</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginTop: 2 }}>{holder ? holder.name : "No holder assigned"}</div>
+          </div>
+          {holder
+            ? <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: C.gold }}>{cvTotal}<span style={{ fontSize: 12, color: C.muted }}> pts</span></div>
+                <div style={{ fontSize: 11, color: C.muted }}>{cvWeeks} week{cvWeeks !== 1 ? "s" : ""} scored this month</div>
+              </div>
+            : <div style={{ fontSize: 12, color: C.muted }}>Assign a holder in Roster →</div>}
+        </div>
+      </div>
 
       <CompanyScorecard />
 
@@ -498,7 +598,7 @@ function aggregatePhorestData(rows) {
 }
 
 
-function ScoreView({ roster, allScores, onScore }) {
+function ScoreView({ roster, allScores, onScore, holders }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const [phorestData, setPhorestData] = useState(null);
@@ -507,6 +607,10 @@ function ScoreView({ roster, allScores, onScore }) {
   const [pullWeek, setPullWeek] = useState(currentWeekKey());
   const wk = currentWeekKey();
   const activeTeam = roster.filter(m => m.active);
+
+  const mk = currentMonthKey();
+  const holderId = holders?.[mk];
+  const holder = activeTeam.find(m => m.id === holderId);
 
   const recentWeeks = useMemo(() => {
     const weeks = [];
@@ -534,7 +638,8 @@ function ScoreView({ roster, allScores, onScore }) {
   };
 
   if (sel) {
-    const cards = getMemberCards(sel);
+    // Holder also gets the Core Value card this month; nobody else does.
+    const cards = [...getMemberCards(sel), ...(sel.id === holderId ? ["core_value"] : [])];
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -603,6 +708,20 @@ function ScoreView({ roster, allScores, onScore }) {
         📋 Pull manually from Phorest → Manager → Reports → Insights: Rebooking Rate, Utilization (Staff Performance dashboard) · Retention (Client Retention dashboard) · No-Shows (Reports → Clients)
       </div>
 
+      {/* Core Value Award — current month's holder */}
+      {holder && (
+        <button onClick={() => { setSel(holder); setCard("core_value"); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: C.goldLight, border: `1.5px solid ${C.gold}66`, borderRadius: 10, cursor: "pointer", textAlign: "left" }}>
+          <span style={{ fontSize: 20 }}>⭐</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>Core Value Award · {monthLabel(mk)}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{holder.name}</div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: C.white, color: C.gold }}>
+            {calcCardPts("core_value", allScores?.[wk]?.[holder.id]?.core_value) ?? "—"}/{cardMax("core_value")} this wk
+          </span>
+        </button>
+      )}
+
       {activeTeam.map(member => {
         const cards = getMemberCards(member);
         const pts = getMemberWeekPts(member, allScores?.[wk] || {});
@@ -622,13 +741,14 @@ function ScoreView({ roster, allScores, onScore }) {
   );
 }
 
-function HistoryView({ roster, allScores }) {
+function HistoryView({ roster, allScores, holders }) {
   const activeTeam = roster.filter(m => m.active);
   const [mode, setMode] = useState("weekly");
   const [selWeek, setSelWeek] = useState(currentWeekKey());
   const allWeeks = useMemo(() => allWeeksSince(START_DATE), []);
   const qGroups = useMemo(() => groupByQuarter(allWeeks), [allWeeks]);
   const qKeys = Object.keys(qGroups).sort().reverse();
+  const months = useMemo(() => monthsFromWeeks(allWeeks), [allWeeks]);
 
   const ModeBtn = ({ id, label }) => (
     <button onClick={() => setMode(id)} style={{ padding: "7px 16px", borderRadius: 20, border: `1.5px solid ${mode === id ? C.gold : C.border}`, background: mode === id ? C.goldLight : C.white, color: mode === id ? C.gold : C.muted, fontWeight: mode === id ? 700 : 500, fontSize: 12, cursor: "pointer" }}>{label}</button>
@@ -640,6 +760,7 @@ function HistoryView({ roster, allScores }) {
         <ModeBtn id="weekly" label="Weekly" />
         <ModeBtn id="quarterly" label="Quarterly" />
         <ModeBtn id="cumulative" label="Cumulative / Bonus Pool" />
+        <ModeBtn id="corevalue" label="Core Value Award" />
       </div>
 
       {mode === "weekly" && (
@@ -671,11 +792,12 @@ function HistoryView({ roster, allScores }) {
 
       {mode === "quarterly" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ fontSize: 11, color: C.muted }}>Ranked by base-card points only (Stylist / Front Desk / Apprentice) — leadership cards excluded.</div>
           {qKeys.map(qk => {
             const weeks = qGroups[qk];
             const ranked = [...activeTeam].map(m => {
-              const total = weeks.reduce((acc, wk) => acc + getMemberWeekPts(m, allScores?.[wk] || {}).reduce((a, p) => a + (p ?? 0), 0), 0);
-              const ws = weeks.filter(wk => getMemberWeekPts(m, allScores?.[wk] || {}).some(p => p !== null)).length;
+              const total = weeks.reduce((acc, wk) => acc + (getMemberBonusWeekPts(m, allScores?.[wk] || {}) ?? 0), 0);
+              const ws = weeks.filter(wk => getMemberBonusWeekPts(m, allScores?.[wk] || {}) !== null).length;
               return { member: m, total, ws };
             }).sort((a, b) => b.total - a.total);
             return (
@@ -707,11 +829,11 @@ function HistoryView({ roster, allScores }) {
       {mode === "cumulative" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ background: C.goldLight, border: `1.5px solid ${C.gold}44`, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: C.gold, fontWeight: 600 }}>
-            🏆 Year-End Bonus Pool — higher annual score = larger share of pool.
+            🏆 Year-End Bonus Pool — higher annual score = larger share of pool. Base-card points only; leadership & Core Value points excluded.
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
             {[...activeTeam]
-              .map(m => ({ m, total: getMemberCumulativePts(m, allScores), weeks: Object.keys(allScores).filter(wk => getMemberWeekPts(m, allScores[wk]).some(p => p !== null)).length }))
+              .map(m => ({ m, total: getMemberCumulativePts(m, allScores), weeks: Object.keys(allScores).filter(wk => getMemberBonusWeekPts(m, allScores[wk]) !== null).length }))
               .sort((a, b) => b.total - a.total)
               .map(({ m, total, weeks }, i, arr) => {
                 const maxPts = arr[0]?.total || 1;
@@ -734,18 +856,75 @@ function HistoryView({ roster, allScores }) {
           </div>
         </div>
       )}
+
+      {mode === "corevalue" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ background: C.goldLight, border: `1.5px solid ${C.gold}44`, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: C.gold, fontWeight: 600 }}>
+            ⭐ Core Value Award — one holder per month, scored Yes/No weekly. Award only; these points never enter the bonus pool.
+          </div>
+          <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+            {months.map((mkk, i) => {
+              const hId = holders?.[mkk];
+              const hMember = roster.find(m => m.id === hId);
+              const total = hMember ? monthCoreValueTotal(hMember.id, mkk, allScores) : 0;
+              const wks = hMember ? monthCoreValueWeeks(hMember.id, mkk, allScores) : 0;
+              return (
+                <div key={mkk} style={{ display: "flex", alignItems: "center", padding: "13px 20px", gap: 12, borderBottom: i < months.length - 1 ? `1px solid ${C.border}` : "none", flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 120 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{monthLabel(mkk)}</div>
+                    <div style={{ fontSize: 11, color: C.muted }}>{mkk === currentMonthKey() ? "Current month" : `${wks} week${wks !== 1 ? "s" : ""} scored`}</div>
+                  </div>
+                  {hMember
+                    ? <>
+                        <Avatar name={hMember.name} size={32} />
+                        <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{hMember.name}</div></div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: C.gold }}>{total}</div>
+                        <div style={{ fontSize: 11, color: C.muted }}>pts</div>
+                      </>
+                    : <div style={{ flex: 1, fontSize: 12, color: C.muted }}>No holder assigned</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function RosterView({ roster, onRosterChange }) {
+function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: "", role: "stylist" });
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [pendingHolder, setPendingHolder] = useState(null); // null = no dialog; "" = pending "remove"
 
   const active = roster.filter(m => m.active);
   const inactive = roster.filter(m => !m.active);
+
+  const mk = currentMonthKey();
+  const holderId = holders?.[mk] || "";
+
+  // Reassigning a month that already has a holder needs confirmation, since it
+  // hides the outgoing holder's scored weeks while someone else holds the month.
+  const requestHolderChange = (next) => {
+    if (next === holderId) return;
+    if (!holderId) { onSetHolder(mk, next); return; }
+    setPendingHolder(next);
+  };
+  const confirmHolderChange = () => { onSetHolder(mk, pendingHolder); setPendingHolder(null); };
+  const cancelHolderChange = () => setPendingHolder(null);
+
+  const outgoing = active.find(m => m.id === holderId);
+  const incoming = pendingHolder ? active.find(m => m.id === pendingHolder) : null;
+  const scoredWeeks = holderId ? monthCoreValueWeeks(holderId, mk, allScores || {}) : 0;
+
+  useEffect(() => {
+    if (pendingHolder === null) return;
+    const onKey = e => { if (e.key === "Escape") setPendingHolder(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingHolder]);
 
   const MemberRow = ({ m }) => {
     const isEditing = editId === m.id;
@@ -764,7 +943,7 @@ function RosterView({ roster, onRosterChange }) {
         ) : (
           <>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}{m.id === holderId && <span style={{ fontSize: 10, marginLeft: 6, background: C.goldLight, color: C.gold, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>⭐ CORE VALUE</span>}</div>
               <div style={{ fontSize: 11, color: C.muted }}>{ROLE_OPTIONS.find(r => r.value === m.role)?.label}{m.start_date ? ` · Started ${weekLabelFromKey(m.start_date)}` : ""}</div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
@@ -781,6 +960,48 @@ function RosterView({ roster, onRosterChange }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Reassignment confirmation */}
+      {pendingHolder !== null && (
+        <div onClick={cancelHolderChange} role="dialog" aria-modal="true"
+          style={{ position: "fixed", inset: 0, background: "rgba(28,28,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 100 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: C.white, borderRadius: 14, border: `1.5px solid ${C.border}`, maxWidth: 420, width: "100%", padding: "22px 24px", boxShadow: "0 20px 50px rgba(0,0,0,0.25)" }}>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>Core Value Award · {monthLabel(mk)}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: C.ink, margin: "6px 0 12px" }}>
+              {incoming ? "Reassign this month's holder?" : "Remove this month's holder?"}
+            </div>
+            <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.6 }}>
+              {incoming
+                ? <>Change {monthLabel(mk)} from <strong>{outgoing?.name}</strong> to <strong>{incoming.name}</strong>.</>
+                : <>Remove <strong>{outgoing?.name}</strong> as {monthLabel(mk)}'s holder.</>}
+            </div>
+            {scoredWeeks > 0 && (
+              <div style={{ marginTop: 12, background: C.pinkLight, border: `1.5px solid ${C.pink}44`, borderRadius: 10, padding: "12px 14px", fontSize: 12.5, color: C.ink, lineHeight: 1.6 }}>
+                ⚠️ <strong>{outgoing?.name}</strong> already has <strong>{scoredWeeks} scored week{scoredWeeks !== 1 ? "s" : ""}</strong> this month. Those scores aren't deleted — they'll reappear if you set {outgoing?.name} back as {monthLabel(mk)}'s holder — but they'll be hidden while {incoming ? incoming.name : "no one"} holds the month, and {incoming ? `${incoming.name} starts from zero` : "the month shows no score"}.
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
+              <button onClick={cancelHolderChange} style={{ padding: "9px 16px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, color: C.ink, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+              <button onClick={confirmHolderChange} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: scoredWeeks > 0 ? C.pink : C.ink, color: C.white, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                {incoming ? `Reassign to ${incoming.name}` : "Remove holder"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Core Value Award assignment for the current month */}
+      <div style={{ background: C.goldLight, border: `1.5px solid ${C.gold}66`, borderRadius: 12, padding: "14px 18px" }}>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>⭐ Core Value Award · {monthLabel(mk)}</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={holderId} onChange={e => requestHolderChange(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, flex: 1, minWidth: 180, background: C.white }}>
+            <option value="">— No holder assigned —</option>
+            {active.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+          <span style={{ fontSize: 11, color: C.muted }}>Rotates monthly · scored Yes/No in the Score tab</span>
+        </div>
+      </div>
+
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: C.steel, fontWeight: 600 }}>
         ℹ️ Deactivating hides a team member from scoring and dashboards — history is never deleted.
       </div>
@@ -816,6 +1037,7 @@ function RosterView({ roster, onRosterChange }) {
 export default function RefineryApp() {
   const [roster, setRoster] = useState([]);
   const [allScores, setAllScores] = useState({});
+  const [holders, setHolders] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlocked, setUnlocked] = useState(false);
@@ -840,8 +1062,18 @@ export default function RefineryApp() {
       }
       setLoading(false);
     }
+    async function loadHolders() {
+      const { data, error } = await supabase.from("core_value_holder").select("*");
+      if (!error && data) {
+        const h = {};
+        data.forEach(r => { h[r.month_key] = r.member_id; });
+        setHolders(h);
+      }
+      // If the table doesn't exist yet, holders simply stays empty (no crash).
+    }
     loadRoster();
     loadScores();
+    loadHolders();
   }, []);
 
   useEffect(() => {
@@ -862,6 +1094,17 @@ export default function RefineryApp() {
     return () => supabase.removeChannel(channel);
   }, []);
 
+  useEffect(() => {
+    const channel = supabase.channel("core-value-holder-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "core_value_holder" }, payload => {
+        const row = payload.new;
+        if (!row) return;
+        setHolders(prev => ({ ...prev, [row.month_key]: row.member_id }));
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
       const next = JSON.parse(JSON.stringify(prev));
@@ -874,6 +1117,17 @@ export default function RefineryApp() {
     await supabase.from("scores").upsert({
       week_key: weekKey, member_id: memberId, card_type: cardType, metric_id: metricId, score: val, updated_at: new Date().toISOString()
     }, { onConflict: "week_key,member_id,card_type,metric_id" });
+  };
+
+  const handleSetHolder = async (monthKey, memberId) => {
+    setHolders(prev => ({ ...prev, [monthKey]: memberId }));
+    if (!memberId) {
+      await supabase.from("core_value_holder").delete().eq("month_key", monthKey);
+      return;
+    }
+    await supabase.from("core_value_holder").upsert({
+      month_key: monthKey, member_id: memberId, updated_at: new Date().toISOString()
+    }, { onConflict: "month_key" });
   };
 
   const handleRosterChange = async (action, member) => {
@@ -929,10 +1183,10 @@ export default function RefineryApp() {
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} />}
-        {view === "history" && <HistoryView roster={roster} allScores={allScores} />}
-        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} />}
+        {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} />}
+        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} />}
       </div>
     </div>
   );
