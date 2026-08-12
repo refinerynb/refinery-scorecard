@@ -198,6 +198,26 @@ function weekLabelFromKey(key) {
   const f = d => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   return `${f(s)} – ${f(e)}`;
 }
+// Explicit range including year — used wherever week ambiguity has caused errors.
+function weekRangeLabel(key) {
+  const e = new Date(key + "T00:00:00"); e.setDate(e.getDate() + 6);
+  return `${weekLabelFromKey(key)}, ${e.getFullYear()}`;
+}
+function prevWeekKey(key) { const d = new Date(key + "T00:00:00"); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); }
+function nextWeekKey(key) { const d = new Date(key + "T00:00:00"); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); }
+// Default the scoring week to the most recent week that already has scores (if it's
+// within ~9 days), otherwise the current week. This keeps late/Monday scorers on the
+// same week the rest of the team already scored, instead of drifting into a new week.
+function defaultReviewWeek(allScores) {
+  const cur = currentWeekKey();
+  const todayMon = getMondayOf(new Date());
+  const keys = Object.keys(allScores || {}).filter(k => k <= cur).sort().reverse();
+  for (const k of keys) {
+    const diffDays = (todayMon - new Date(k + "T00:00:00")) / 86400000;
+    if (diffDays <= 9) return k;
+  }
+  return cur;
+}
 function getQuarter(k) { return Math.ceil(parseInt(k.slice(5, 7)) / 3); }
 function getYear(k) { return k.slice(0, 4); }
 function allWeeksSince(startKey) {
@@ -604,32 +624,23 @@ function ScoreView({ roster, allScores, onScore, holders }) {
   const [phorestData, setPhorestData] = useState(null);
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState(null);
-  const [pullWeek, setPullWeek] = useState(currentWeekKey());
-  const wk = currentWeekKey();
+  // The single, explicit week that ALL scoring in this session saves to.
+  const [reviewWeek, setReviewWeek] = useState(() => defaultReviewWeek(allScores));
+  const [confirmed, setConfirmed] = useState(false);
   const activeTeam = roster.filter(m => m.active);
 
-  const mk = currentMonthKey();
+  const cur = currentWeekKey();
+  // Core Value holder is tied to the month of the week being scored.
+  const mk = monthKeyOfWeek(reviewWeek);
   const holderId = holders?.[mk];
   const holder = activeTeam.find(m => m.id === holderId);
-
-  const recentWeeks = useMemo(() => {
-    const weeks = [];
-    let cursor = getMondayOf(new Date());
-    for (let i = 0; i < 8; i++) {
-      weeks.push(cursor.toISOString().slice(0, 10));
-      cursor = new Date(cursor);
-      cursor.setDate(cursor.getDate() - 7);
-    }
-    return weeks;
-  }, []);
 
   const handlePullPhorest = async () => {
     setPulling(true);
     setPullError(null);
     try {
-      const rows = await pullPhorestWeek(pullWeek);
-      const aggregated = aggregatePhorestData(rows);
-      setPhorestData(aggregated);
+      const rows = await pullPhorestWeek(reviewWeek);
+      setPhorestData(aggregatePhorestData(rows));
     } catch (err) {
       setPullError(err.message);
     } finally {
@@ -637,11 +648,14 @@ function ScoreView({ roster, allScores, onScore, holders }) {
     }
   };
 
+  // ── Detail: scoring one person's card, always for the confirmed reviewWeek ──
   if (sel) {
-    // Holder also gets the Core Value card this month; nobody else does.
     const cards = [...getMemberCards(sel), ...(sel.id === holderId ? ["core_value"] : [])];
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ background: C.warm, border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "7px 12px", fontSize: 11, fontWeight: 700, color: C.ink }}>
+          Scoring week of {weekRangeLabel(reviewWeek)}
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <button onClick={() => { setSel(null); setCard(null); }} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 13, cursor: "pointer", color: C.ink, fontWeight: 600 }}>← Back</button>
           <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{sel.name}</div>
@@ -655,42 +669,66 @@ function ScoreView({ roster, allScores, onScore, holders }) {
           <ScorecardPanel
             member={sel}
             cardType={card}
-            scores={allScores?.[wk]?.[sel.id]?.[card]}
-            onScore={(mid, val) => onScore(wk, sel.id, card, mid, val)}
+            scores={allScores?.[reviewWeek]?.[sel.id]?.[card]}
+            onScore={(mid, val) => onScore(reviewWeek, sel.id, card, mid, val)}
           />
         )}
       </div>
     );
   }
 
+  // ── Step 1: confirm the week before the roster appears ──
+  if (!confirmed) {
+    const isCurrent = reviewWeek === cur;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, alignItems: "center", paddingTop: 8 }}>
+        <div style={{ background: C.white, border: `2px solid ${C.gold}`, borderRadius: 14, padding: "22px 20px", maxWidth: 440, width: "100%", textAlign: "center" }}>
+          <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Which week are you scoring?</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, margin: "6px 0 4px" }}>
+            <button onClick={() => setReviewWeek(prevWeekKey(reviewWeek))} aria-label="Previous week" style={{ width: 40, height: 40, borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 18, cursor: "pointer", color: C.ink }}>‹</button>
+            <div style={{ minWidth: 190 }}>
+              <div style={{ fontSize: 19, fontWeight: 800, color: C.ink }}>{weekRangeLabel(reviewWeek)}</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{isCurrent ? "Current week (Mon–Sun)" : "Mon–Sun"}</div>
+            </div>
+            <button onClick={() => setReviewWeek(nextWeekKey(reviewWeek))} disabled={reviewWeek >= cur} aria-label="Next week" style={{ width: 40, height: 40, borderRadius: 10, border: `1.5px solid ${C.border}`, background: reviewWeek >= cur ? C.warm : C.white, fontSize: 18, cursor: reviewWeek >= cur ? "default" : "pointer", color: reviewWeek >= cur ? C.border : C.ink }}>›</button>
+          </div>
+          <div style={{ fontSize: 12, color: C.muted, margin: "10px 0 16px" }}>Everyone must score the same week. Use the arrows if this isn't right, then confirm.</div>
+          <button onClick={() => setConfirmed(true)} style={{ width: "100%", padding: "13px", borderRadius: 10, background: C.ink, color: C.white, border: "none", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
+            ✓ Score {weekLabelFromKey(reviewWeek)}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: C.muted, textAlign: "center", maxWidth: 380 }}>
+          Reviewed Thursday · covers the prior Mon–Sun. Late scorers: pick the same week the rest of the team already scored.
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step 2: score, all writes pinned to reviewWeek ──
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 18px" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Scoring week of {weekLabelFromKey(wk)}</div>
-        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Reviewed Thursday · Covers previous Mon–Sun</div>
+      <div style={{ background: C.white, border: `1.5px solid ${C.gold}`, borderRadius: 12, padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>Scoring week of {weekRangeLabel(reviewWeek)}</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>All scores below save to this week.</div>
+        </div>
+        <button onClick={() => { setConfirmed(false); }} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 12, cursor: "pointer", color: C.steel, fontWeight: 700 }}>Change week</button>
       </div>
 
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 12, padding: "14px 18px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.steel }}>📊 Phorest Data — Service & Product Sales</div>
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Automated. Rebooking, Retention, Utilization & No-Shows still pulled manually from Phorest Insights.</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Pulls the confirmed week ({weekLabelFromKey(reviewWeek)}). Rebooking, Retention, Utilization & No-Shows still pulled manually.</div>
           </div>
           <button onClick={handlePullPhorest} disabled={pulling} style={{ padding: "8px 16px", borderRadius: 8, background: pulling ? C.border : C.steel, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: pulling ? "default" : "pointer" }}>
             {pulling ? "Pulling... (~20s)" : "Pull Sales Data"}
           </button>
         </div>
-        <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {recentWeeks.map((w, i) => (
-            <button key={w} onClick={() => setPullWeek(w)} style={{ padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${pullWeek === w ? C.steel : C.border}`, background: pullWeek === w ? C.steel : C.white, color: pullWeek === w ? C.white : C.muted, fontSize: 11, cursor: "pointer", fontWeight: pullWeek === w ? 700 : 400, whiteSpace: "nowrap" }}>
-              {i === 0 ? "This Week" : weekLabelFromKey(w)}
-            </button>
-          ))}
-        </div>
         {pullError && <div style={{ marginTop: 10, fontSize: 12, color: C.pink, fontWeight: 600 }}>⚠ {pullError}</div>}
         {phorestData && !pullError && (
           <div style={{ marginTop: 12, borderTop: `1px solid ${C.steel}33`, paddingTop: 10 }}>
-            <div style={{ fontSize: 11, color: C.steel, fontWeight: 700, marginBottom: 6 }}>✓ Pulled {weekLabelFromKey(pullWeek)} — Service & Product totals per stylist:</div>
+            <div style={{ fontSize: 11, color: C.steel, fontWeight: 700, marginBottom: 6 }}>✓ Pulled {weekLabelFromKey(reviewWeek)} — Service & Product totals per stylist:</div>
             {Object.keys(phorestData).length === 0 ? (
               <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic" }}>No transactions found for this week</div>
             ) : (
@@ -708,7 +746,7 @@ function ScoreView({ roster, allScores, onScore, holders }) {
         📋 Pull manually from Phorest → Manager → Reports → Insights: Rebooking Rate, Utilization (Staff Performance dashboard) · Retention (Client Retention dashboard) · No-Shows (Reports → Clients)
       </div>
 
-      {/* Core Value Award — current month's holder */}
+      {/* Core Value Award — holder for the month of the week being scored */}
       {holder && (
         <button onClick={() => { setSel(holder); setCard("core_value"); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: C.goldLight, border: `1.5px solid ${C.gold}66`, borderRadius: 10, cursor: "pointer", textAlign: "left" }}>
           <span style={{ fontSize: 20 }}>⭐</span>
@@ -717,14 +755,14 @@ function ScoreView({ roster, allScores, onScore, holders }) {
             <div style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{holder.name}</div>
           </div>
           <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: C.white, color: C.gold }}>
-            {calcCardPts("core_value", allScores?.[wk]?.[holder.id]?.core_value) ?? "—"}/{cardMax("core_value")} this wk
+            {calcCardPts("core_value", allScores?.[reviewWeek]?.[holder.id]?.core_value) ?? "—"}/{cardMax("core_value")} this wk
           </span>
         </button>
       )}
 
       {activeTeam.map(member => {
         const cards = getMemberCards(member);
-        const pts = getMemberWeekPts(member, allScores?.[wk] || {});
+        const pts = getMemberWeekPts(member, allScores?.[reviewWeek] || {});
         const done = pts.every(p => p !== null);
         return (
           <button key={member.id} onClick={() => { setSel(member); setCard(cards[0]); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: C.white, border: `1.5px solid ${done ? C.green : C.border}`, borderRadius: 10, cursor: "pointer", textAlign: "left" }}>
@@ -768,7 +806,7 @@ function HistoryView({ roster, allScores, holders }) {
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {allWeeks.map(wk => (
               <button key={wk} onClick={() => setSelWeek(wk)} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${selWeek === wk ? C.gold : C.border}`, background: selWeek === wk ? C.goldLight : C.white, fontSize: 11, cursor: "pointer", fontWeight: selWeek === wk ? 700 : 400, color: selWeek === wk ? C.gold : C.muted, whiteSpace: "nowrap" }}>
-                {wk === currentWeekKey() ? "This Week" : weekLabelFromKey(wk)}
+                {weekLabelFromKey(wk)}{wk === currentWeekKey() ? " ·now" : ""}
               </button>
             ))}
           </div>
