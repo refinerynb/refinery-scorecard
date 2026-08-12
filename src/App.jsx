@@ -309,6 +309,65 @@ function calcTeamKpiAvgPct(activeTeam, weekScores) {
   return Math.round((avgPts / MAX_PTS) * 100);
 }
 
+// ── Recognition / shout-out detection ────────────────────────────
+// Evaluate achievements against the most recent week that actually has scores.
+function latestScoredWeek(allScores) {
+  const cur = currentWeekKey();
+  const keys = Object.keys(allScores || {}).filter(k => k <= cur).sort().reverse();
+  return keys[0] || cur;
+}
+// Consecutive green weeks on the base card, ending at endWeek.
+function greenStreak(member, allScores, endWeek) {
+  let streak = 0, k = endWeek;
+  for (let guard = 0; guard < 260; guard++) {
+    const pts = getMemberBonusWeekPts(member, allScores?.[k] || {});
+    if (pts !== null && pts >= GREEN_MIN) { streak++; k = prevWeekKey(k); }
+    else break;
+  }
+  return streak;
+}
+// Did they max a sales metric on their base card this week?
+function salesWin(member, weekScores) {
+  const card = getBonusCard(member);
+  const s = weekScores?.[member.id]?.[card];
+  if (!s) return null;
+  const svc = s.service_sales === 2, prod = s.product_sales === 2;
+  if (svc && prod) return "Hit both sales goals";
+  if (svc) return "Hit service sales goal";
+  if (prod) return "Hit product sales goal";
+  return null;
+}
+// Biggest positive week-over-week jump in base-card points (min +2 to matter).
+function mostImproved(activeTeam, allScores, endWeek) {
+  const prev = prevWeekKey(endWeek);
+  let best = null, bestDelta = 1;
+  activeTeam.forEach(m => {
+    const now = getMemberBonusWeekPts(m, allScores?.[endWeek] || {});
+    const then = getMemberBonusWeekPts(m, allScores?.[prev] || {});
+    if (now !== null && then !== null && now - then > bestDelta) { bestDelta = now - then; best = m.id; }
+  });
+  return best ? { id: best, delta: bestDelta } : null;
+}
+function detectAchievements(activeTeam, allScores, week) {
+  const out = [];
+  const mi = mostImproved(activeTeam, allScores, week);
+  activeTeam.forEach(m => {
+    const streak = greenStreak(m, allScores, week);
+    if (streak >= 3) out.push({ memberId: m.id, name: m.name, kind: "streak", reason: `On a roll — ${streak} weeks green` });
+    const sw = salesWin(m, allScores?.[week] || {});
+    if (sw) out.push({ memberId: m.id, name: m.name, kind: "sales", reason: sw });
+    if (mi && mi.id === m.id) out.push({ memberId: m.id, name: m.name, kind: "improved", reason: `Most improved — +${mi.delta} pts vs last week` });
+  });
+  return out;
+}
+function timeAgo(iso) {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 function Avatar({ name, size = 38 }) {
   const initials = (name || "").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   return <div style={{ width: size, height: size, borderRadius: "50%", background: C.goldLight, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: size * 0.34, color: C.gold, flexShrink: 0 }}>{initials}</div>;
@@ -446,7 +505,104 @@ function TeamStatusList({ title, icon, entries, color, bg }) {
   );
 }
 
-function Dashboard({ roster, allScores, holders }) {
+function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unlocked }) {
+  const activeTeam = roster.filter(m => m.active);
+  const week = latestScoredWeek(allScores);
+  const achievements = detectAchievements(activeTeam, allScores, week);
+  const [composing, setComposing] = useState(null); // key of suggestion being composed
+  const [note, setNote] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualId, setManualId] = useState("");
+
+  const nameOf = id => roster.find(m => m.id === id)?.name || "Someone";
+  const alreadyPosted = (memberId, kind) =>
+    shoutouts.some(s => s.member_id === memberId && s.kind === kind && s.week_key === week);
+
+  const post = (memberId, reason, kind) => {
+    onAdd({ member_id: memberId, reason, kind, note: note.trim(), week_key: week });
+    setComposing(null); setNote("");
+  };
+  const postManual = () => {
+    if (!manualId || !note.trim()) return;
+    onAdd({ member_id: manualId, reason: "Shout-out", kind: "custom", note: note.trim(), week_key: week });
+    setManualOpen(false); setManualId(""); setNote("");
+  };
+
+  const recent = [...shoutouts].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).slice(0, 12);
+
+  return (
+    <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "12px 20px", background: C.goldLight, borderBottom: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.gold }}>🎉 Recognition</div>
+        <div style={{ fontSize: 11, color: C.gold }}>Week of {weekLabelFromKey(week)}</div>
+      </div>
+
+      {/* Suggested shout-outs from detected achievements */}
+      {achievements.length === 0 ? (
+        <div style={{ padding: "12px 20px", fontSize: 12, color: C.muted }}>No standout achievements detected yet this week.</div>
+      ) : (
+        achievements.map((a, i) => {
+          const key = a.memberId + a.kind;
+          const posted = alreadyPosted(a.memberId, a.kind);
+          return (
+            <div key={key} style={{ padding: "11px 20px", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Avatar name={a.name} size={32} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{a.name}</div>
+                  <div style={{ fontSize: 11, color: C.muted }}>{a.reason}</div>
+                </div>
+                {posted ? (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: C.green }}>✓ Recognized</span>
+                ) : composing === key ? null : (
+                  <button onClick={() => { setComposing(key); setNote(""); }} style={{ padding: "6px 12px", borderRadius: 8, background: C.gold, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>🎉 Shout out</button>
+                )}
+              </div>
+              {composing === key && (
+                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                  <input value={note} onChange={e => setNote(e.target.value)} placeholder="Add a note (optional)" style={{ flex: 1, minWidth: 160, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12 }} />
+                  <button onClick={() => post(a.memberId, a.reason, a.kind)} style={{ padding: "7px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Post</button>
+                  <button onClick={() => { setComposing(null); setNote(""); }} style={{ padding: "7px 12px", borderRadius: 8, background: C.border, color: C.ink, border: "none", fontSize: 12, cursor: "pointer" }}>Cancel</button>
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
+
+      {/* Manual recognition for anyone */}
+      <div style={{ padding: "10px 20px", borderBottom: recent.length ? `1px solid ${C.border}` : "none" }}>
+        {manualOpen ? (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <select value={manualId} onChange={e => setManualId(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12 }}>
+              <option value="">Choose person…</option>
+              {activeTeam.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            <input value={note} onChange={e => setNote(e.target.value)} placeholder="What for?" style={{ flex: 1, minWidth: 140, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12 }} />
+            <button onClick={postManual} style={{ padding: "7px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Post</button>
+            <button onClick={() => { setManualOpen(false); setManualId(""); setNote(""); }} style={{ padding: "7px 12px", borderRadius: 8, background: C.border, color: C.ink, border: "none", fontSize: 12, cursor: "pointer" }}>Cancel</button>
+          </div>
+        ) : (
+          <button onClick={() => { setManualOpen(true); setNote(""); }} style={{ fontSize: 12, fontWeight: 700, color: C.gold, background: "none", border: "none", cursor: "pointer", padding: 0 }}>+ Recognize someone else</button>
+        )}
+      </div>
+
+      {/* Running recognition log */}
+      {recent.map((s, i) => (
+        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", borderBottom: i < recent.length - 1 ? `1px solid ${C.border}` : "none" }}>
+          <span style={{ fontSize: 15 }}>🎉</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: C.ink }}><strong>{nameOf(s.member_id)}</strong> — {s.reason}{s.note ? `: ${s.note}` : ""}</div>
+            <div style={{ fontSize: 10, color: C.muted }}>{s.week_key ? weekLabelFromKey(s.week_key) : ""}{s.created_at ? ` · ${timeAgo(s.created_at)}` : ""}</div>
+          </div>
+          {unlocked && <button onClick={() => onDelete(s.id)} aria-label="Delete" style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", lineHeight: 1 }}>×</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked }) {
   const activeTeam = roster.filter(m => m.active);
   const wk = currentWeekKey();
   const ws = allScores[wk] || {};
@@ -489,6 +645,8 @@ function Dashboard({ roster, allScores, holders }) {
       </div>
 
       <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)} · dual-role members are listed once per card</div>
+
+      <RecognitionSection roster={roster} allScores={allScores} shoutouts={shoutouts || []} onAdd={onAddShoutout} onDelete={onDeleteShoutout} unlocked={unlocked} />
 
       <TeamStatusList title="Green Team" icon="🟢" entries={greenEntries} color={C.green} bg={C.greenLight} />
       <TeamStatusList title="Pink Team" icon="🔴" entries={pinkEntries} color={C.pink} bg={C.pinkLight} />
@@ -1076,6 +1234,7 @@ export default function RefineryApp() {
   const [roster, setRoster] = useState([]);
   const [allScores, setAllScores] = useState({});
   const [holders, setHolders] = useState({});
+  const [shoutouts, setShoutouts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlocked, setUnlocked] = useState(false);
@@ -1109,9 +1268,15 @@ export default function RefineryApp() {
       }
       // If the table doesn't exist yet, holders simply stays empty (no crash).
     }
+    async function loadShoutouts() {
+      const { data, error } = await supabase.from("shout_outs").select("*").order("created_at", { ascending: false });
+      if (!error && data) setShoutouts(data);
+      // Missing table → stays empty, no crash.
+    }
     loadRoster();
     loadScores();
     loadHolders();
+    loadShoutouts();
   }, []);
 
   useEffect(() => {
@@ -1143,6 +1308,20 @@ export default function RefineryApp() {
     return () => supabase.removeChannel(channel);
   }, []);
 
+  useEffect(() => {
+    const channel = supabase.channel("shoutouts-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "shout_outs" }, payload => {
+        if (payload.eventType === "INSERT" && payload.new) {
+          setShoutouts(prev => prev.some(s => s.id === payload.new.id) ? prev : [payload.new, ...prev]);
+        }
+        if (payload.eventType === "DELETE" && payload.old) {
+          setShoutouts(prev => prev.filter(s => s.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
       const next = JSON.parse(JSON.stringify(prev));
@@ -1166,6 +1345,17 @@ export default function RefineryApp() {
     await supabase.from("core_value_holder").upsert({
       month_key: monthKey, member_id: memberId, updated_at: new Date().toISOString()
     }, { onConflict: "month_key" });
+  };
+
+  const handleAddShoutout = async (row) => {
+    const rec = { id: uid(), created_at: new Date().toISOString(), note: "", ...row };
+    setShoutouts(prev => [rec, ...prev]);
+    await supabase.from("shout_outs").insert(rec);
+  };
+
+  const handleDeleteShoutout = async (id) => {
+    setShoutouts(prev => prev.filter(s => s.id !== id));
+    await supabase.from("shout_outs").delete().eq("id", id);
   };
 
   const handleRosterChange = async (action, member) => {
@@ -1221,7 +1411,7 @@ export default function RefineryApp() {
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} />}
         {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} />}
