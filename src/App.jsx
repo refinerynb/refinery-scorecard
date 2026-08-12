@@ -362,6 +362,17 @@ function timeAgo(iso) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+const SATISFACTION_TARGET = 8;
+// Average of submitted 1–10 ratings for a week (null if none submitted).
+function teamSatisfactionAvg(notes, week, activeTeam) {
+  const vals = activeTeam.map(m => notes?.[week]?.[m.id]?.satisfaction).filter(v => typeof v === "number");
+  if (!vals.length) return null;
+  return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+}
+function satisfactionCount(notes, week, activeTeam) {
+  return activeTeam.filter(m => typeof notes?.[week]?.[m.id]?.satisfaction === "number").length;
+}
+
 function Avatar({ name, size = 38 }) {
   const initials = (name || "").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   return <div style={{ width: size, height: size, borderRadius: "50%", background: C.goldLight, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: size * 0.34, color: C.gold, flexShrink: 0 }}>{initials}</div>;
@@ -577,7 +588,7 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
   );
 }
 
-function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked }) {
+function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes }) {
   const activeTeam = roster.filter(m => m.active);
   const wk = currentWeekKey();
   const ws = allScores[wk] || {};
@@ -622,6 +633,27 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
       <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)} · dual-role members are listed once per card</div>
 
       <RecognitionSection roster={roster} allScores={allScores} shoutouts={shoutouts || []} onAdd={onAddShoutout} onDelete={onDeleteShoutout} unlocked={unlocked} />
+
+      {(() => {
+        const satWeek = latestScoredWeek(allScores);
+        const avg = teamSatisfactionAvg(notes, satWeek, activeTeam);
+        const count = satisfactionCount(notes, satWeek, activeTeam);
+        const good = avg !== null && avg >= SATISFACTION_TARGET;
+        return (
+          <div style={{ background: C.white, border: `1.5px solid ${good ? C.green : C.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Team Satisfaction · target {SATISFACTION_TARGET}+</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{count > 0 ? `${count} rating${count !== 1 ? "s" : ""} · week of ${weekLabelFromKey(satWeek)}` : "No ratings yet this week"}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 28, fontWeight: 800, color: avg === null ? C.border : good ? C.green : C.pink }}>
+                {avg === null ? "—" : avg}<span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>/10</span>
+              </div>
+              {avg !== null && <div style={{ fontSize: 11, fontWeight: 700, color: good ? C.green : C.pink }}>{good ? "🟢 On target" : "🔴 Below target"}</div>}
+            </div>
+          </div>
+        );
+      })()}
 
       <TeamStatusList title="Green Team" icon="🟢" entries={greenEntries} color={C.green} bg={C.greenLight} />
       <TeamStatusList title="Pink Team" icon="🔴" entries={pinkEntries} color={C.pink} bg={C.pinkLight} />
@@ -751,7 +783,7 @@ function aggregatePhorestData(rows) {
 }
 
 
-function ScoreView({ roster, allScores, onScore, holders }) {
+function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const [phorestData, setPhorestData] = useState(null);
@@ -806,6 +838,33 @@ function ScoreView({ roster, allScores, onScore, holders }) {
             onScore={(mid, val) => onScore(reviewWeek, sel.id, card, mid, val)}
           />
         )}
+
+        {/* Team satisfaction + private feedback — per person, per week */}
+        <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ padding: "12px 20px", background: C.steelLight, borderBottom: `1.5px solid ${C.border}` }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.steel }}>Team Satisfaction (1–10)</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Target {SATISFACTION_TARGET}+. Feedback is private to leaders — not shown on the dashboard.</div>
+          </div>
+          <div style={{ padding: "14px 20px" }}>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(nval => {
+                const cur = notes?.[reviewWeek]?.[sel.id]?.satisfaction;
+                const active = cur === nval;
+                const good = nval >= SATISFACTION_TARGET;
+                return (
+                  <button key={nval} onClick={() => onSetNote(reviewWeek, sel.id, { satisfaction: nval })} style={{ width: 34, height: 34, borderRadius: 8, border: `2px solid ${active ? (good ? C.green : C.gold) : C.border}`, background: active ? (good ? C.green : C.gold) : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{nval}</button>
+                );
+              })}
+            </div>
+            <textarea
+              value={notes?.[reviewWeek]?.[sel.id]?.feedback || ""}
+              onChange={e => onSetNote(reviewWeek, sel.id, { feedback: e.target.value })}
+              placeholder="Feedback for leaders (optional, private)…"
+              rows={2}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
+            />
+          </div>
+        </div>
       </div>
     );
   }
@@ -1205,11 +1264,87 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores })
   );
 }
 
+function CoachingView({ roster, allScores, notes, onSetNote }) {
+  const activeTeam = roster.filter(m => m.active);
+  const [week, setWeek] = useState(() => latestScoredWeek(allScores));
+  const avg = teamSatisfactionAvg(notes, week, activeTeam);
+  const good = avg !== null && avg >= SATISFACTION_TARGET;
+  const ws = allScores?.[week] || {};
+  const pink = activeTeam.filter(m => getMemberCards(m).some(c => { const p = calcCardPts(c, ws?.[m.id]?.[c]); return p !== null && p < GREEN_MIN; }));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: C.steel, fontWeight: 600 }}>
+        🔒 Leaders only — satisfaction feedback and coaching notes are private to this tab and never shown on the dashboard.
+      </div>
+
+      {/* Week stepper */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+        <button onClick={() => setWeek(prevWeekKey(week))} aria-label="Previous week" style={{ width: 36, height: 36, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 16, cursor: "pointer", color: C.ink }}>‹</button>
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, minWidth: 180, textAlign: "center" }}>{weekRangeLabel(week)}</div>
+        <button onClick={() => setWeek(nextWeekKey(week))} disabled={week >= currentWeekKey()} aria-label="Next week" style={{ width: 36, height: 36, borderRadius: 8, border: `1.5px solid ${C.border}`, background: week >= currentWeekKey() ? C.warm : C.white, fontSize: 16, cursor: week >= currentWeekKey() ? "default" : "pointer", color: week >= currentWeekKey() ? C.border : C.ink }}>›</button>
+      </div>
+
+      {/* Satisfaction + feedback */}
+      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Team Satisfaction & Feedback</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: avg === null ? C.muted : good ? C.green : C.pink }}>{avg === null ? "No ratings" : `Avg ${avg}/10`}</div>
+        </div>
+        {activeTeam.map((m, i) => {
+          const nd = notes?.[week]?.[m.id] || {};
+          const has = typeof nd.satisfaction === "number" || (nd.feedback && nd.feedback.trim());
+          return (
+            <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 20px", borderBottom: i < activeTeam.length - 1 ? `1px solid ${C.border}` : "none", opacity: has ? 1 : 0.6 }}>
+              <Avatar name={m.name} size={30} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+                {nd.feedback ? <div style={{ fontSize: 12, color: C.ink, marginTop: 2 }}>{nd.feedback}</div> : <div style={{ fontSize: 11, color: C.muted, fontStyle: "italic", marginTop: 2 }}>No feedback</div>}
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: typeof nd.satisfaction !== "number" ? C.border : nd.satisfaction >= SATISFACTION_TARGET ? C.green : C.pink, flexShrink: 0 }}>
+                {typeof nd.satisfaction === "number" ? `${nd.satisfaction}/10` : "—"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Pink team coaching notes */}
+      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "12px 20px", background: C.pinkLight, borderBottom: `1.5px solid ${C.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.pink }}>🔴 Pink Team Coaching Notes ({pink.length})</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Anyone with a pink card this week. Log the coaching conversation & action plan.</div>
+        </div>
+        {pink.length === 0 ? (
+          <div style={{ padding: "16px 20px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>No pink team members this week 🎉</div>
+        ) : (
+          pink.map((m, i) => (
+            <div key={m.id} style={{ padding: "12px 20px", borderBottom: i < pink.length - 1 ? `1px solid ${C.border}` : "none" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <Avatar name={m.name} size={30} />
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+              </div>
+              <textarea
+                value={notes?.[week]?.[m.id]?.coaching_note || ""}
+                onChange={e => onSetNote(week, m.id, { coaching_note: e.target.value })}
+                placeholder="Coaching notes & action plan…"
+                rows={2}
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
+              />
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function RefineryApp() {
   const [roster, setRoster] = useState([]);
   const [allScores, setAllScores] = useState({});
   const [holders, setHolders] = useState({});
   const [shoutouts, setShoutouts] = useState([]);
+  const [notes, setNotes] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlocked, setUnlocked] = useState(false);
@@ -1248,10 +1383,22 @@ export default function RefineryApp() {
       if (!error && data) setShoutouts(data);
       // Missing table → stays empty, no crash.
     }
+    async function loadNotes() {
+      const { data, error } = await supabase.from("member_week_notes").select("*");
+      if (!error && data) {
+        const structured = {};
+        data.forEach(r => {
+          (structured[r.week_key] = structured[r.week_key] || {})[r.member_id] = { satisfaction: r.satisfaction, feedback: r.feedback, coaching_note: r.coaching_note };
+        });
+        setNotes(structured);
+      }
+      // Missing table → stays empty, no crash.
+    }
     loadRoster();
     loadScores();
     loadHolders();
     loadShoutouts();
+    loadNotes();
   }, []);
 
   useEffect(() => {
@@ -1296,6 +1443,36 @@ export default function RefineryApp() {
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, []);
+
+  useEffect(() => {
+    const channel = supabase.channel("mwn-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "member_week_notes" }, payload => {
+        const r = payload.new || payload.old;
+        if (!r) return;
+        setNotes(prev => {
+          const next = { ...prev, [r.week_key]: { ...(prev[r.week_key] || {}) } };
+          if (payload.eventType === "DELETE") delete next[r.week_key][r.member_id];
+          else next[r.week_key][r.member_id] = { satisfaction: r.satisfaction, feedback: r.feedback, coaching_note: r.coaching_note };
+          return next;
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  const handleSetNote = async (weekKey, memberId, patch) => {
+    const existing = notes?.[weekKey]?.[memberId] || {};
+    const merged = { ...existing, ...patch };
+    setNotes(prev => {
+      const next = { ...prev, [weekKey]: { ...(prev[weekKey] || {}) } };
+      next[weekKey][memberId] = merged;
+      return next;
+    });
+    await supabase.from("member_week_notes").upsert(
+      { week_key: weekKey, member_id: memberId, ...merged, updated_at: new Date().toISOString() },
+      { onConflict: "week_key,member_id" }
+    );
+  };
 
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
@@ -1374,6 +1551,7 @@ export default function RefineryApp() {
             <NavBtn id="dashboard" label="Dashboard" />
             <NavBtn id="score" label="Score This Week" locked />
             <NavBtn id="history" label="History & Tracking" />
+            <NavBtn id="coaching" label="Coaching" locked />
             <NavBtn id="roster" label="Roster" locked />
           </div>
         </div>
@@ -1386,9 +1564,10 @@ export default function RefineryApp() {
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} />}
+        {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} />}
       </div>
     </div>
