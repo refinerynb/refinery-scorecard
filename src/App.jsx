@@ -337,26 +337,20 @@ function salesWin(member, weekScores) {
   if (prod) return "Hit product sales goal";
   return null;
 }
-// Biggest positive week-over-week jump in base-card points (min +2 to matter).
-function mostImproved(activeTeam, allScores, endWeek) {
-  const prev = prevWeekKey(endWeek);
-  let best = null, bestDelta = 1;
-  activeTeam.forEach(m => {
-    const now = getMemberBonusWeekPts(m, allScores?.[endWeek] || {});
-    const then = getMemberBonusWeekPts(m, allScores?.[prev] || {});
-    if (now !== null && then !== null && now - then > bestDelta) { bestDelta = now - then; best = m.id; }
-  });
-  return best ? { id: best, delta: bestDelta } : null;
+// True comeback: pink on the base card last week, green this week.
+function pinkToGreen(member, allScores, endWeek) {
+  const now = getMemberBonusWeekPts(member, allScores?.[endWeek] || {});
+  const then = getMemberBonusWeekPts(member, allScores?.[prevWeekKey(endWeek)] || {});
+  return then !== null && then < GREEN_MIN && now !== null && now >= GREEN_MIN;
 }
 function detectAchievements(activeTeam, allScores, week) {
   const out = [];
-  const mi = mostImproved(activeTeam, allScores, week);
   activeTeam.forEach(m => {
     const streak = greenStreak(m, allScores, week);
     if (streak >= 3) out.push({ memberId: m.id, name: m.name, kind: "streak", reason: `On a roll — ${streak} weeks green` });
     const sw = salesWin(m, allScores?.[week] || {});
     if (sw) out.push({ memberId: m.id, name: m.name, kind: "sales", reason: sw });
-    if (mi && mi.id === m.id) out.push({ memberId: m.id, name: m.name, kind: "improved", reason: `Most improved — +${mi.delta} pts vs last week` });
+    if (pinkToGreen(m, allScores, week)) out.push({ memberId: m.id, name: m.name, kind: "comeback", reason: "Bounced back — pink → green" });
   });
   return out;
 }
@@ -509,69 +503,50 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
   const activeTeam = roster.filter(m => m.active);
   const week = latestScoredWeek(allScores);
   const achievements = detectAchievements(activeTeam, allScores, week);
-  const [composing, setComposing] = useState(null); // key of suggestion being composed
-  const [note, setNote] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [manualId, setManualId] = useState("");
+  const [note, setNote] = useState("");
 
   const nameOf = id => roster.find(m => m.id === id)?.name || "Someone";
-  const alreadyPosted = (memberId, kind) =>
-    shoutouts.some(s => s.member_id === memberId && s.kind === kind && s.week_key === week);
+  const ICON = { streak: "🔥", sales: "💰", comeback: "📈" };
 
-  const post = (memberId, reason, kind) => {
-    onAdd({ member_id: memberId, reason, kind, note: note.trim(), week_key: week });
-    setComposing(null); setNote("");
-  };
+  // Only manual recognitions persist and show in a list; auto wins are read-only.
+  const manual = [...shoutouts]
+    .filter(s => s.kind === "custom")
+    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+    .slice(0, 10);
+
   const postManual = () => {
     if (!manualId || !note.trim()) return;
     onAdd({ member_id: manualId, reason: "Shout-out", kind: "custom", note: note.trim(), week_key: week });
     setManualOpen(false); setManualId(""); setNote("");
   };
 
-  const recent = [...shoutouts].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).slice(0, 12);
-
   return (
     <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
       <div style={{ padding: "12px 20px", background: C.goldLight, borderBottom: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: C.gold }}>🎉 Recognition</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.gold }}>🎉 This Week's Wins</div>
         <div style={{ fontSize: 11, color: C.gold }}>Week of {weekLabelFromKey(week)}</div>
       </div>
 
-      {/* Suggested shout-outs from detected achievements */}
+      {/* Auto-detected wins — read-only, no posting */}
       {achievements.length === 0 ? (
-        <div style={{ padding: "12px 20px", fontSize: 12, color: C.muted }}>No standout achievements detected yet this week.</div>
+        <div style={{ padding: "12px 20px", fontSize: 12, color: C.muted }}>No standout wins yet this week.</div>
       ) : (
-        achievements.map((a, i) => {
-          const key = a.memberId + a.kind;
-          const posted = alreadyPosted(a.memberId, a.kind);
-          return (
-            <div key={key} style={{ padding: "11px 20px", borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Avatar name={a.name} size={32} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{a.name}</div>
-                  <div style={{ fontSize: 11, color: C.muted }}>{a.reason}</div>
-                </div>
-                {posted ? (
-                  <span style={{ fontSize: 11, fontWeight: 700, color: C.green }}>✓ Recognized</span>
-                ) : composing === key ? null : (
-                  <button onClick={() => { setComposing(key); setNote(""); }} style={{ padding: "6px 12px", borderRadius: 8, background: C.gold, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>🎉 Shout out</button>
-                )}
-              </div>
-              {composing === key && (
-                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                  <input value={note} onChange={e => setNote(e.target.value)} placeholder="Add a note (optional)" style={{ flex: 1, minWidth: 160, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12 }} />
-                  <button onClick={() => post(a.memberId, a.reason, a.kind)} style={{ padding: "7px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Post</button>
-                  <button onClick={() => { setComposing(null); setNote(""); }} style={{ padding: "7px 12px", borderRadius: 8, background: C.border, color: C.ink, border: "none", fontSize: 12, cursor: "pointer" }}>Cancel</button>
-                </div>
-              )}
+        achievements.map((a, i) => (
+          <div key={a.memberId + a.kind} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 20px", borderBottom: `1px solid ${C.border}` }}>
+            <span style={{ fontSize: 17 }}>{ICON[a.kind] || "⭐"}</span>
+            <Avatar name={a.name} size={30} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{a.name}</div>
+              <div style={{ fontSize: 11, color: C.muted }}>{a.reason}</div>
             </div>
-          );
-        })
+          </div>
+        ))
       )}
 
-      {/* Manual recognition for anyone */}
-      <div style={{ padding: "10px 20px", borderBottom: recent.length ? `1px solid ${C.border}` : "none" }}>
+      {/* Manual recognition — for wins the tracker can't see */}
+      <div style={{ padding: "10px 20px", borderBottom: manual.length ? `1px solid ${C.border}` : "none" }}>
         {manualOpen ? (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <select value={manualId} onChange={e => setManualId(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12 }}>
@@ -579,7 +554,7 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
               {activeTeam.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="What for?" style={{ flex: 1, minWidth: 140, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12 }} />
-            <button onClick={postManual} style={{ padding: "7px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Post</button>
+            <button onClick={postManual} style={{ padding: "7px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Add</button>
             <button onClick={() => { setManualOpen(false); setManualId(""); setNote(""); }} style={{ padding: "7px 12px", borderRadius: 8, background: C.border, color: C.ink, border: "none", fontSize: 12, cursor: "pointer" }}>Cancel</button>
           </div>
         ) : (
@@ -587,13 +562,13 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
         )}
       </div>
 
-      {/* Running recognition log */}
-      {recent.map((s, i) => (
-        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", borderBottom: i < recent.length - 1 ? `1px solid ${C.border}` : "none" }}>
-          <span style={{ fontSize: 15 }}>🎉</span>
+      {/* Manual recognitions list */}
+      {manual.map((s, i) => (
+        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", borderBottom: i < manual.length - 1 ? `1px solid ${C.border}` : "none" }}>
+          <span style={{ fontSize: 15 }}>🙌</span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, color: C.ink }}><strong>{nameOf(s.member_id)}</strong> — {s.reason}{s.note ? `: ${s.note}` : ""}</div>
-            <div style={{ fontSize: 10, color: C.muted }}>{s.week_key ? weekLabelFromKey(s.week_key) : ""}{s.created_at ? ` · ${timeAgo(s.created_at)}` : ""}</div>
+            <div style={{ fontSize: 13, color: C.ink }}><strong>{nameOf(s.member_id)}</strong>{s.note ? ` — ${s.note}` : ""}</div>
+            <div style={{ fontSize: 10, color: C.muted }}>{s.created_at ? timeAgo(s.created_at) : ""}</div>
           </div>
           {unlocked && <button onClick={() => onDelete(s.id)} aria-label="Delete" style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", lineHeight: 1 }}>×</button>}
         </div>
