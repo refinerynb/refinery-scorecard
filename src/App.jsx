@@ -373,6 +373,35 @@ function satisfactionCount(notes, week, activeTeam) {
   return activeTeam.filter(m => typeof notes?.[week]?.[m.id]?.satisfaction === "number").length;
 }
 
+// For a pink member: their pink card(s) with points, and the categories they
+// scored 0 in this week (the zeros are what pulled them under 6), each with how
+// many of the last 6 scored weeks that category was a 0.
+function pinkDetail(member, allScores, week) {
+  const multiCard = getMemberCards(member).length > 1;
+  const cards = [], zeros = [];
+  getMemberCards(member).forEach(cardType => {
+    const cardScores = allScores?.[week]?.[member.id]?.[cardType];
+    const pts = calcCardPts(cardType, cardScores);
+    if (pts === null || pts >= GREEN_MIN) return; // only the pink card(s)
+    cards.push({ label: SCORECARDS[cardType].label, pts });
+    SCORECARDS[cardType].metrics.forEach(mt => {
+      if (mt.handicap) return;
+      if (cardScores?.[mt.id] === 0) {
+        let scored = 0, z = 0, k = week;
+        for (let g = 0; g < 400 && scored < 13; g++) {
+          const v = allScores?.[k]?.[member.id]?.[cardType]?.[mt.id];
+          if (v !== undefined) { scored++; if (v === 0) z++; }
+          k = prevWeekKey(k);
+        }
+        const chronic = scored >= 3 && z * 2 >= scored; // 0 in half+ of a meaningful sample
+        zeros.push({ label: (multiCard ? SCORECARDS[cardType].label + ": " : "") + mt.label, z, scored, chronic });
+      }
+    });
+  });
+  zeros.sort((a, b) => (b.chronic - a.chronic) || (b.z / b.scored - a.z / a.scored));
+  return { cards, zeros };
+}
+
 function Avatar({ name, size = 38 }) {
   const initials = (name || "").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   return <div style={{ width: size, height: size, borderRadius: "50%", background: C.goldLight, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: size * 0.34, color: C.gold, flexShrink: 0 }}>{initials}</div>;
@@ -1122,15 +1151,23 @@ function HistoryView({ roster, allScores, holders }) {
   );
 }
 
-function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores }) {
+function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, onClearWeek }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: "", role: "stylist" });
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [pendingHolder, setPendingHolder] = useState(null); // null = no dialog; "" = pending "remove"
+  const [pendingClear, setPendingClear] = useState(null); // week_key pending clear
 
   const active = roster.filter(m => m.active);
   const inactive = roster.filter(m => !m.active);
+
+  // Weeks that contain scores, newest first, with member counts and future flags.
+  const scoredWeeks = Object.keys(allScores || {})
+    .filter(k => Object.keys(allScores[k] || {}).length > 0)
+    .sort().reverse()
+    .map(k => ({ key: k, members: Object.keys(allScores[k]).length, future: k > currentWeekKey() }));
+  const clearMembers = pendingClear ? Object.keys(allScores[pendingClear] || {}).length : 0;
 
   const mk = currentMonthKey();
   const holderId = holders?.[mk] || "";
@@ -1260,6 +1297,44 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores })
           {inactive.map(m => <MemberRow key={m.id} m={m} />)}
         </div>
       )}
+
+      {/* Data cleanup — find & clear misfiled weeks */}
+      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>🧹 Data Cleanup — Scored Weeks</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Future-dated weeks are flagged — those are almost always misfiled scores. Clearing a week removes everyone's scores for it and can't be undone.</div>
+        </div>
+        {scoredWeeks.length === 0 ? (
+          <div style={{ padding: "14px 20px", fontSize: 12, color: C.muted }}>No scored weeks yet.</div>
+        ) : (
+          scoredWeeks.map((w, i) => (
+            <div key={w.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 20px", borderBottom: i < scoredWeeks.length - 1 ? `1px solid ${C.border}` : "none", background: w.future ? C.pinkLight : "transparent" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{weekRangeLabel(w.key)}{w.future && <span style={{ fontSize: 10, marginLeft: 6, background: C.pink, color: C.white, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>FUTURE — CHECK</span>}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>{w.members} member{w.members !== 1 ? "s" : ""} scored</div>
+              </div>
+              <button onClick={() => setPendingClear(w.key)} style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${C.pink}`, background: C.white, color: C.pink, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Clear week</button>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Clear-week confirmation */}
+      {pendingClear && (
+        <div onClick={() => setPendingClear(null)} role="dialog" aria-modal="true"
+          style={{ position: "fixed", inset: 0, background: "rgba(28,28,28,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 100 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: C.white, borderRadius: 14, border: `1.5px solid ${C.border}`, maxWidth: 420, width: "100%", padding: "22px 24px", boxShadow: "0 20px 50px rgba(0,0,0,0.25)" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: C.ink, marginBottom: 10 }}>Clear all scores for this week?</div>
+            <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.6 }}>
+              This permanently deletes <strong>{clearMembers} member{clearMembers !== 1 ? "s" : ""}'</strong> scores for <strong>{weekRangeLabel(pendingClear)}</strong>{pendingClear > currentWeekKey() ? " (a future-dated week)" : ""}. This can't be undone. Satisfaction ratings and coaching notes for the week are not affected.
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
+              <button onClick={() => setPendingClear(null)} style={{ padding: "9px 16px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, color: C.ink, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+              <button onClick={() => { onClearWeek(pendingClear); setPendingClear(null); }} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: C.pink, color: C.white, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Clear week</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1318,12 +1393,27 @@ function CoachingView({ roster, allScores, notes, onSetNote }) {
         {pink.length === 0 ? (
           <div style={{ padding: "16px 20px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>No pink team members this week 🎉</div>
         ) : (
-          pink.map((m, i) => (
+          pink.map((m, i) => {
+            const { cards, zeros } = pinkDetail(m, allScores, week);
+            return (
             <div key={m.id} style={{ padding: "12px 20px", borderBottom: i < pink.length - 1 ? `1px solid ${C.border}` : "none" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                 <Avatar name={m.name} size={30} />
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+                  {cards.length > 0 && <div style={{ fontSize: 11, color: C.pink, fontWeight: 700 }}>{cards.map(c => `${c.label} ${c.pts}/12`).join(" · ")}</div>}
+                </div>
               </div>
+              {zeros.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Scored 0 this week</div>
+                  {zeros.map((z, j) => (
+                    <div key={j} style={{ fontSize: 12, color: C.ink, padding: "2px 0" }}>
+                      <strong>{z.label}</strong> <span style={{ color: C.muted }}>— 0 in {z.z}/{z.scored} {z.scored === 1 ? "wk" : "wks"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <textarea
                 value={notes?.[week]?.[m.id]?.coaching_note || ""}
                 onChange={e => onSetNote(week, m.id, { coaching_note: e.target.value })}
@@ -1332,7 +1422,8 @@ function CoachingView({ roster, allScores, notes, onSetNote }) {
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
               />
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>
@@ -1510,6 +1601,11 @@ export default function RefineryApp() {
     await supabase.from("shout_outs").delete().eq("id", id);
   };
 
+  const handleClearWeek = async (weekKey) => {
+    setAllScores(prev => { const n = { ...prev }; delete n[weekKey]; return n; });
+    await supabase.from("scores").delete().eq("week_key", weekKey);
+  };
+
   const handleRosterChange = async (action, member) => {
     if (action === "add") {
       await supabase.from("roster").insert(member);
@@ -1568,7 +1664,7 @@ export default function RefineryApp() {
         {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} />}
-        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} />}
+        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} />}
       </div>
     </div>
   );
