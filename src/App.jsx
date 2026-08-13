@@ -394,6 +394,11 @@ function latestScoredWeek(allScores) {
   const keys = Object.keys(allScores || {}).filter(k => k <= cur).sort().reverse();
   return keys[0] || cur;
 }
+// Most recent week that has any company numbers entered (fallback: current week).
+function latestCompanyWeek(companyScores) {
+  const keys = Object.keys(companyScores || {}).filter(w => Object.keys(companyScores[w] || {}).length).sort().reverse();
+  return keys[0] || currentWeekKey();
+}
 // Consecutive green weeks on the base card, ending at endWeek.
 function greenStreak(member, allScores, endWeek) {
   let streak = 0, k = endWeek;
@@ -650,8 +655,7 @@ function CompanyNumRow({ label, sub, value, target, green, kind, editable, onCha
   );
 }
 
-function CompanyScorecardSection({ roster, notes, companyScores, unlocked, onSetCompany }) {
-  const [week, setWeek] = useState(currentWeekKey());
+function CompanyScorecardSection({ roster, notes, companyScores, week, onSetCompany, readOnly }) {
   const activeTeam = roster.filter(m => m.active);
   const stylistCount = activeTeam.filter(m => getMemberCards(m).includes("stylist")).length;
   const mk = monthKeyOfWeek(week);
@@ -699,16 +703,12 @@ function CompanyScorecardSection({ roster, notes, companyScores, unlocked, onSet
           <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery · Company</div>
           <div style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Company Scorecard</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => setWeek(prevWeekKey(week))} style={{ background: "none", border: `1px solid ${C.gold}66`, color: C.gold, borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 14 }}>◀</button>
-          <div style={{ fontSize: 11, color: C.white, fontWeight: 600, minWidth: 92, textAlign: "center" }}>Week of {weekLabelFromKey(week)}</div>
-          <button onClick={() => setWeek(nextWeekKey(week))} style={{ background: "none", border: `1px solid ${C.gold}66`, color: C.gold, borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 14 }}>▶</button>
-        </div>
+        <div style={{ fontSize: 11, color: C.white, fontWeight: 600 }}>Week of {weekLabelFromKey(week)}</div>
       </div>
 
       <div style={{ padding: "8px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}`, fontSize: 11, color: C.muted, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
         <span>{scoredCount}/{COMPANY_METRICS.length} entered · {greenCount} on target · {stylistCount} active stylists</span>
-        {!unlocked && <span style={{ color: C.gold, fontWeight: 700 }}>🔒 Unlock a PIN tab to edit</span>}
+        {readOnly && <span style={{ color: C.gold, fontWeight: 700 }}>🔒 Edit under Score This Week</span>}
       </div>
 
       {rows.map(r => (
@@ -721,7 +721,7 @@ function CompanyScorecardSection({ roster, notes, companyScores, unlocked, onSet
           target={r.target}
           green={r.green}
           kind={r.m.kind}
-          editable={unlocked && !r.m.auto}
+          editable={!readOnly && !r.m.auto}
           onChange={raw => setVal(r.m.id, raw)}
         />
       ))}
@@ -855,7 +855,7 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
   );
 }
 
-function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores, companyScores, onSetCompany }) {
+function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores, companyScores }) {
   const activeTeam = roster.filter(m => m.active);
   const wk = latestScoredWeek(allScores); // consistent with Wins/satisfaction — the last week actually scored
 
@@ -941,7 +941,7 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
         </div>
       </div>
 
-      <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} unlocked={unlocked} onSetCompany={onSetCompany} />
+      <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} week={latestCompanyWeek(companyScores)} readOnly onSetCompany={() => {}} />
 
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 12, padding: "16px 20px" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.steel, marginBottom: 8 }}>📋 Book Control Trigger</div>
@@ -1050,7 +1050,7 @@ function aggregatePhorestData(rows) {
 }
 
 
-function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly }) {
+function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const [phorestData, setPhorestData] = useState(null);
@@ -1260,6 +1260,9 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
           </button>
         );
       })}
+
+      <div style={{ height: 4 }} />
+      <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} week={reviewWeek} onSetCompany={onSetCompany} />
     </div>
   );
 }
@@ -2037,8 +2040,8 @@ export default function RefineryApp() {
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} onSetCompany={handleSetCompany} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} />}
