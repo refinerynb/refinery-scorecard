@@ -35,7 +35,7 @@ const STYLIST_TARGETS = {
   vanessa: { serviceWeekly: 2123, productWeekly: 69 },
   vicki:   { serviceWeekly: 1331, productWeekly: 69 },
 };
-const PPH_FLOOR = 68.22;
+const PPH_FLOOR = 68.44;
 
 const SCORECARDS = {
   stylist: {
@@ -43,7 +43,7 @@ const SCORECARDS = {
     metrics: [
       { id: "service_sales",    label: "Service Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest"   },
       { id: "product_sales",    label: "Product Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest"   },
-      { id: "pph",              label: "PPH",                                   desc: "Floor target $68.22 · 0 = below · 1 = at floor · 2 = floor +5%", source: "Phorest"   },
+      { id: "pph",              label: "PPH",                                   desc: "Floor target $68.44 · 0 = below · 1 = at floor · 2 = floor +5%", source: "Phorest"   },
       { id: "rebooking",        label: "Rebooking Rate",                       desc: "0 = <80% · 1 = 80–84% · 2 = 85%+",                           source: "Phorest"   },
       { id: "retention",        label: "Retention Rate (90-day rolling)",      desc: "0 = <75% · 1 = 75–84% · 2 = 85%+ · Grace period: 90 days",   source: "Phorest",  grace: true },
       { id: "active_guests",    label: "Active Guest Count",                   desc: "0 = <70 · 1 = 70–84 · 2 = 85+",                              source: "Phorest"   },
@@ -373,6 +373,27 @@ function satisfactionCount(notes, week, activeTeam) {
   return activeTeam.filter(m => typeof notes?.[week]?.[m.id]?.satisfaction === "number").length;
 }
 
+// Zeros for one specific card this week, with 13-week history + chronic flag.
+function cardZeros(memberId, cardType, allScores, week) {
+  const cardScores = allScores?.[week]?.[memberId]?.[cardType];
+  const zeros = [];
+  SCORECARDS[cardType].metrics.forEach(mt => {
+    if (mt.handicap) return;
+    if (cardScores?.[mt.id] === 0) {
+      let scored = 0, z = 0, k = week;
+      for (let g = 0; g < 400 && scored < 13; g++) {
+        const v = allScores?.[k]?.[memberId]?.[cardType]?.[mt.id];
+        if (v !== undefined) { scored++; if (v === 0) z++; }
+        k = prevWeekKey(k);
+      }
+      const chronic = scored >= 3 && z * 2 >= scored;
+      zeros.push({ label: mt.label, z, scored, chronic });
+    }
+  });
+  zeros.sort((a, b) => (b.chronic - a.chronic) || (b.z / b.scored - a.z / a.scored));
+  return zeros;
+}
+
 // For a pink member: their pink card(s) with points, and the categories they
 // scored 0 in this week (the zeros are what pulled them under 6), each with how
 // many of the last 6 scored weeks that category was a 0.
@@ -497,7 +518,7 @@ function CompanyScorecard() {
         {[
           { label: "Service Sales Target", val: "$58,315.72", sub: "monthly" },
           { label: "Product Sales Target", val: "$3,900", sub: "monthly · 6.7% of service" },
-          { label: "Shop PPH Target", val: "$68.22", sub: "floor minimum" },
+          { label: "Shop PPH Target", val: "$68.44", sub: "floor minimum" },
           { label: "Utilization Target", val: "80–90%", sub: "shop average" },
         ].map(s => (
           <div key={s.label} style={{ background: C.white, padding: "14px 16px" }}>
@@ -821,7 +842,10 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote }) {
   // The single, explicit week that ALL scoring in this session saves to.
   const [reviewWeek, setReviewWeek] = useState(() => defaultReviewWeek(allScores));
   const [confirmed, setConfirmed] = useState(false);
+  const [satPending, setSatPending] = useState(null); // low rating held until feedback is written
   const activeTeam = roster.filter(m => m.active);
+
+  useEffect(() => { setSatPending(null); }, [sel?.id]);
 
   const cur = currentWeekKey();
   // Core Value holder is tied to the month of the week being scored.
@@ -869,31 +893,51 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote }) {
         )}
 
         {/* Team satisfaction + private feedback — per person, per week */}
-        <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ padding: "12px 20px", background: C.steelLight, borderBottom: `1.5px solid ${C.border}` }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.steel }}>Team Satisfaction (1–10)</div>
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Target {SATISFACTION_TARGET}+. Feedback is private to leaders — not shown on the dashboard.</div>
-          </div>
-          <div style={{ padding: "14px 20px" }}>
-            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(nval => {
-                const cur = notes?.[reviewWeek]?.[sel.id]?.satisfaction;
-                const active = cur === nval;
-                const good = nval >= SATISFACTION_TARGET;
-                return (
-                  <button key={nval} onClick={() => onSetNote(reviewWeek, sel.id, { satisfaction: nval })} style={{ width: 34, height: 34, borderRadius: 8, border: `2px solid ${active ? (good ? C.green : C.gold) : C.border}`, background: active ? (good ? C.green : C.gold) : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{nval}</button>
-                );
-              })}
+        {(() => {
+          const savedSat = notes?.[reviewWeek]?.[sel.id]?.satisfaction;
+          const savedFb = notes?.[reviewWeek]?.[sel.id]?.feedback || "";
+          const effectiveSat = satPending != null ? satPending : savedSat;
+          const needFeedback = effectiveSat != null && effectiveSat <= 7 && !savedFb.trim();
+          const pickSat = (val) => {
+            if (val >= 8 || savedFb.trim()) { onSetNote(reviewWeek, sel.id, { satisfaction: val }); setSatPending(null); }
+            else { setSatPending(val); }
+          };
+          const onFeedback = (text) => {
+            if (satPending != null && text.trim()) { onSetNote(reviewWeek, sel.id, { satisfaction: satPending, feedback: text }); setSatPending(null); }
+            else { onSetNote(reviewWeek, sel.id, { feedback: text }); }
+          };
+          return (
+            <div style={{ background: C.white, border: `1.5px solid ${needFeedback ? C.pink : C.border}`, borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "12px 20px", background: C.steelLight, borderBottom: `1.5px solid ${C.border}` }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.steel }}>Team Satisfaction (1–10)</div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Target {SATISFACTION_TARGET}+. Feedback is private to leaders — not shown on the dashboard.</div>
+              </div>
+              <div style={{ padding: "14px 20px" }}>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(nval => {
+                    const active = effectiveSat === nval;
+                    const good = nval >= SATISFACTION_TARGET;
+                    return (
+                      <button key={nval} onClick={() => pickSat(nval)} style={{ width: 34, height: 34, borderRadius: 8, border: `2px solid ${active ? (good ? C.green : C.gold) : C.border}`, background: active ? (good ? C.green : C.gold) : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{nval}</button>
+                    );
+                  })}
+                </div>
+                {needFeedback && (
+                  <div style={{ fontSize: 11, color: C.pink, fontWeight: 700, marginBottom: 6 }}>
+                    ⚠ A reason is required for a rating of 7 or below.{satPending != null ? " The rating won't save until you add feedback." : ""}
+                  </div>
+                )}
+                <textarea
+                  value={savedFb}
+                  onChange={e => onFeedback(e.target.value)}
+                  placeholder={needFeedback ? "Required: why 7 or below?" : "Feedback for leaders (optional, private)…"}
+                  rows={2}
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${needFeedback ? C.pink : C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
+                />
+              </div>
             </div>
-            <textarea
-              value={notes?.[reviewWeek]?.[sel.id]?.feedback || ""}
-              onChange={e => onSetNote(reviewWeek, sel.id, { feedback: e.target.value })}
-              placeholder="Feedback for leaders (optional, private)…"
-              rows={2}
-              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
-            />
-          </div>
-        </div>
+          );
+        })()}
       </div>
     );
   }
@@ -1342,6 +1386,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
 function CoachingView({ roster, allScores, notes, onSetNote }) {
   const activeTeam = roster.filter(m => m.active);
   const [week, setWeek] = useState(() => latestScoredWeek(allScores));
+  const [open, setOpen] = useState({});
   const avg = teamSatisfactionAvg(notes, week, activeTeam);
   const good = avg !== null && avg >= SATISFACTION_TARGET;
   const ws = allScores?.[week] || {};
@@ -1395,34 +1440,47 @@ function CoachingView({ roster, allScores, notes, onSetNote }) {
         ) : (
           pink.map((m, i) => {
             const { cards, zeros } = pinkDetail(m, allScores, week);
+            const isOpen = !!open[m.id];
+            const nZeros = zeros.length;
+            const nChronic = zeros.filter(z => z.chronic).length;
+            const hasNote = !!(notes?.[week]?.[m.id]?.coaching_note || "").trim();
             return (
-            <div key={m.id} style={{ padding: "12px 20px", borderBottom: i < pink.length - 1 ? `1px solid ${C.border}` : "none" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <div key={m.id} style={{ borderBottom: i < pink.length - 1 ? `1px solid ${C.border}` : "none" }}>
+              <div onClick={() => setOpen(o => ({ ...o, [m.id]: !o[m.id] }))} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 20px", cursor: "pointer" }}>
+                <span style={{ fontSize: 12, color: C.muted, width: 10 }}>{isOpen ? "▾" : "▸"}</span>
                 <Avatar name={m.name} size={30} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}{hasNote && <span title="Has coaching note" style={{ marginLeft: 6 }}>📝</span>}</div>
                   {cards.length > 0 && <div style={{ fontSize: 11, color: C.pink, fontWeight: 700 }}>{cards.map(c => `${c.label} ${c.pts}/12`).join(" · ")}</div>}
                 </div>
+                {nZeros > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: nChronic > 0 ? C.pinkLight : C.warm, color: nChronic > 0 ? C.pink : C.muted, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {nZeros} zero{nZeros !== 1 ? "s" : ""}{nChronic > 0 ? ` · ${nChronic} chronic` : ""}
+                  </span>
+                )}
               </div>
-              {zeros.length > 0 && (
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Scored 0 this week</div>
-                  {zeros.map((z, j) => (
-                    <div key={j} style={{ fontSize: 12, color: C.ink, padding: "2px 0", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <strong>{z.label}</strong>
-                      <span style={{ color: z.chronic ? C.pink : C.muted, fontWeight: z.chronic ? 700 : 400 }}>— 0 in {z.z}/{z.scored} {z.scored === 1 ? "wk" : "wks"}</span>
-                      {z.chronic && <span style={{ fontSize: 9, letterSpacing: 0.5, background: C.pink, color: C.white, padding: "1px 6px", borderRadius: 10, fontWeight: 800 }}>CHRONIC</span>}
+              {isOpen && (
+                <div style={{ padding: "0 20px 14px 40px" }}>
+                  {zeros.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      {zeros.map((z, j) => (
+                        <div key={j} style={{ fontSize: 12, color: C.ink, padding: "2px 0", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <strong>{z.label}</strong>
+                          <span style={{ color: z.chronic ? C.pink : C.muted, fontWeight: z.chronic ? 700 : 400 }}>— missed {z.z} of {z.scored} {z.scored === 1 ? "wk" : "wks"}</span>
+                          {z.chronic && <span style={{ fontSize: 9, letterSpacing: 0.5, background: C.pink, color: C.white, padding: "1px 6px", borderRadius: 10, fontWeight: 800 }}>CHRONIC</span>}
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                  <textarea
+                    value={notes?.[week]?.[m.id]?.coaching_note || ""}
+                    onChange={e => onSetNote(week, m.id, { coaching_note: e.target.value })}
+                    placeholder="Coaching notes & action plan…"
+                    rows={2}
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
+                  />
                 </div>
               )}
-              <textarea
-                value={notes?.[week]?.[m.id]?.coaching_note || ""}
-                onChange={e => onSetNote(week, m.id, { coaching_note: e.target.value })}
-                placeholder="Coaching notes & action plan…"
-                rows={2}
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
-              />
             </div>
             );
           })
@@ -1644,7 +1702,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v7</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v9</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
