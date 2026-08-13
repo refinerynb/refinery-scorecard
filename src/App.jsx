@@ -1163,7 +1163,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
   const inactive = roster.filter(m => !m.active);
 
   // Weeks that contain scores, newest first, with member counts and future flags.
-  const scoredWeeks = Object.keys(allScores || {})
+  const weeksWithScores = Object.keys(allScores || {})
     .filter(k => Object.keys(allScores[k] || {}).length > 0)
     .sort().reverse()
     .map(k => ({ key: k, members: Object.keys(allScores[k]).length, future: k > currentWeekKey() }));
@@ -1304,11 +1304,11 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
           <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>🧹 Data Cleanup — Scored Weeks</div>
           <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Future-dated weeks are flagged — those are almost always misfiled scores. Clearing a week removes everyone's scores for it and can't be undone.</div>
         </div>
-        {scoredWeeks.length === 0 ? (
+        {weeksWithScores.length === 0 ? (
           <div style={{ padding: "14px 20px", fontSize: 12, color: C.muted }}>No scored weeks yet.</div>
         ) : (
-          scoredWeeks.map((w, i) => (
-            <div key={w.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 20px", borderBottom: i < scoredWeeks.length - 1 ? `1px solid ${C.border}` : "none", background: w.future ? C.pinkLight : "transparent" }}>
+          weeksWithScores.map((w, i) => (
+            <div key={w.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 20px", borderBottom: i < weeksWithScores.length - 1 ? `1px solid ${C.border}` : "none", background: w.future ? C.pinkLight : "transparent" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{weekRangeLabel(w.key)}{w.future && <span style={{ fontSize: 10, marginLeft: 6, background: C.pink, color: C.white, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>FUTURE — CHECK</span>}</div>
                 <div style={{ fontSize: 11, color: C.muted }}>{w.members} member{w.members !== 1 ? "s" : ""} scored</div>
@@ -1408,8 +1408,10 @@ function CoachingView({ roster, allScores, notes, onSetNote }) {
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ fontSize: 10, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Scored 0 this week</div>
                   {zeros.map((z, j) => (
-                    <div key={j} style={{ fontSize: 12, color: C.ink, padding: "2px 0" }}>
-                      <strong>{z.label}</strong> <span style={{ color: C.muted }}>— 0 in {z.z}/{z.scored} {z.scored === 1 ? "wk" : "wks"}</span>
+                    <div key={j} style={{ fontSize: 12, color: C.ink, padding: "2px 0", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <strong>{z.label}</strong>
+                      <span style={{ color: z.chronic ? C.pink : C.muted, fontWeight: z.chronic ? 700 : 400 }}>— 0 in {z.z}/{z.scored} {z.scored === 1 ? "wk" : "wks"}</span>
+                      {z.chronic && <span style={{ fontSize: 9, letterSpacing: 0.5, background: C.pink, color: C.white, padding: "1px 6px", borderRadius: 10, fontWeight: 800 }}>CHRONIC</span>}
                     </div>
                   ))}
                 </div>
