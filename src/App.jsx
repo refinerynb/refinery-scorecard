@@ -37,6 +37,55 @@ const STYLIST_TARGETS = {
 };
 const PPH_FLOOR = 68.44;
 
+// ── COMPANY SCORECARD targets & helpers ───────────────────────────────────────
+const PRODUCT_PER_STYLIST_WEEKLY = 100; // product-sales target per active stylist
+const PAYROLL_TARGET_PCT = 50;          // green when BELOW this
+const UTILIZATION_TARGET_PCT = 80;      // green at or above
+const GUEST_RATING_TARGET = 5;          // out of 5
+const STYLIST_RATING_TARGET = 8;        // out of 10 (auto from team satisfaction)
+// Service-sales targets by calendar month (weekly = monthly / 4).
+const SERVICE_TARGETS = {
+  "2026-07": { monthly: 55902.78, weekly: 13975.70 },
+  "2026-08": { monthly: 58794.00, weekly: 14698.50 },
+  "2026-09": { monthly: 60140.40, weekly: 15035.10 },
+  "2026-10": { monthly: 74907.78, weekly: 18726.95 },
+  "2026-11": { monthly: 65428.00, weekly: 16357.00 },
+  "2026-12": { monthly: 73824.00, weekly: 18456.00 },
+};
+const COMPANY_METRICS = [
+  { id: "service_sales",  label: "Service Sales",  kind: "money", dir: "higher", agg: "sum" },
+  { id: "product_sales",  label: "Product Sales",  kind: "money", dir: "higher", agg: "sum" },
+  { id: "payroll_pct",    label: "Payroll %",      kind: "pct",   dir: "lower",  agg: "avg" },
+  { id: "pph",            label: "PPH",            kind: "money", dir: "higher", agg: "avg" },
+  { id: "utilization",    label: "Utilization %",  kind: "pct",   dir: "higher", agg: "avg" },
+  { id: "guest_rating",   label: "Guest Rating",   kind: "star",  dir: "higher", agg: "avg" },
+  { id: "stylist_rating", label: "Stylist Rating", kind: "ten",   dir: "higher", agg: "avg", auto: true },
+];
+function companyTargetWeekly(id, monthKey, stylistCount) {
+  switch (id) {
+    case "service_sales":  return SERVICE_TARGETS[monthKey]?.weekly ?? null;
+    case "product_sales":  return PRODUCT_PER_STYLIST_WEEKLY * stylistCount;
+    case "payroll_pct":    return PAYROLL_TARGET_PCT;
+    case "pph":            return PPH_FLOOR;
+    case "utilization":    return UTILIZATION_TARGET_PCT;
+    case "guest_rating":   return GUEST_RATING_TARGET;
+    case "stylist_rating": return STYLIST_RATING_TARGET;
+    default:               return null;
+  }
+}
+function companyGreen(dir, value, target) {
+  if (value == null || target == null || Number.isNaN(value)) return null;
+  return dir === "lower" ? value < target : value >= target;
+}
+function fmtCompany(kind, v) {
+  if (v == null || Number.isNaN(v)) return "—";
+  if (kind === "money") return "$" + Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (kind === "pct")   return v + "%";
+  if (kind === "star")  return v + "★";
+  if (kind === "ten")   return v + "/10";
+  return String(v);
+}
+
 const SCORECARDS = {
   stylist: {
     label: "Stylist",
@@ -581,26 +630,120 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
 }
 
 // ── COMPANY SCORECARD ─────────────────────────────────────────────────────────
-function CompanyScorecard() {
+function CompanyNumRow({ label, sub, value, target, green, kind, editable, onChange }) {
+  const dot = green === null ? C.border : green ? C.green : C.pink;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 20px", borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ width: 8, height: 8, borderRadius: 4, background: dot, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{label}</div>
+        <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>{sub}</div>
+      </div>
+      {editable ? (
+        <input type="number" inputMode="decimal" value={value ?? ""} onChange={e => onChange(e.target.value)}
+          placeholder="—"
+          style={{ width: 96, padding: "7px 9px", borderRadius: 8, border: `1.5px solid ${green === null ? C.border : green ? C.green : C.pink}`, fontSize: 14, fontWeight: 700, textAlign: "right", color: C.ink }} />
+      ) : (
+        <div style={{ fontSize: 15, fontWeight: 800, color: green === null ? C.muted : green ? C.green : C.pink, minWidth: 70, textAlign: "right" }}>{fmtCompany(kind, value)}</div>
+      )}
+    </div>
+  );
+}
+
+function CompanyScorecardSection({ roster, notes, companyScores, unlocked, onSetCompany }) {
+  const [week, setWeek] = useState(currentWeekKey());
+  const activeTeam = roster.filter(m => m.active);
+  const stylistCount = activeTeam.filter(m => getMemberCards(m).includes("stylist")).length;
+  const mk = monthKeyOfWeek(week);
+  const autoRating = teamSatisfactionAvg(notes, week, activeTeam);
+  const wk = companyScores?.[week] || {};
+
+  // Weekly rows
+  const rows = COMPANY_METRICS.map(m => {
+    const value = m.auto ? autoRating : (typeof wk[m.id] === "number" ? wk[m.id] : null);
+    const target = companyTargetWeekly(m.id, mk, stylistCount);
+    return { m, value, target, green: companyGreen(m.dir, value, target) };
+  });
+  const greenCount = rows.filter(r => r.green === true).length;
+  const scoredCount = rows.filter(r => r.value != null).length;
+
+  // Monthly rollup (sales summed, rates averaged; each week judged against its weekly bar)
+  const rollup = COMPANY_METRICS.map(m => {
+    let vals;
+    if (m.auto) {
+      vals = Object.keys(notes || {}).filter(w => monthKeyOfWeek(w) === mk)
+        .map(w => teamSatisfactionAvg(notes, w, activeTeam)).filter(v => v != null);
+    } else {
+      vals = Object.keys(companyScores || {}).filter(w => monthKeyOfWeek(w) === mk)
+        .map(w => companyScores[w]?.[m.id]).filter(v => typeof v === "number");
+    }
+    if (!vals.length) return { m, value: null, target: null, green: null, n: 0 };
+    const perWeek = companyTargetWeekly(m.id, mk, stylistCount);
+    let value, target;
+    if (m.agg === "sum") { value = Math.round(vals.reduce((a, b) => a + b, 0) * 100) / 100; target = perWeek != null ? Math.round(perWeek * vals.length * 100) / 100 : null; }
+    else { value = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100; target = perWeek; }
+    return { m, value, target, green: companyGreen(m.dir, value, target), n: vals.length };
+  });
+  const monthTotal = SERVICE_TARGETS[mk]?.monthly ?? null;
+
+  const setVal = (id, raw) => {
+    if (raw === "" || raw == null) { onSetCompany(week, id, null); return; }
+    const num = parseFloat(raw);
+    if (!Number.isNaN(num)) onSetCompany(week, id, num);
+  };
+
   return (
     <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-      <div style={{ padding: "14px 20px", background: C.ink }}>
-        <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</div>
-        <div style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Company Scorecard — Q3 2026</div>
+      <div style={{ padding: "14px 20px", background: C.ink, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery · Company</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: C.white }}>Company Scorecard</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => setWeek(prevWeekKey(week))} style={{ background: "none", border: `1px solid ${C.gold}66`, color: C.gold, borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 14 }}>◀</button>
+          <div style={{ fontSize: 11, color: C.white, fontWeight: 600, minWidth: 92, textAlign: "center" }}>Week of {weekLabelFromKey(week)}</div>
+          <button onClick={() => setWeek(nextWeekKey(week))} style={{ background: "none", border: `1px solid ${C.gold}66`, color: C.gold, borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 14 }}>▶</button>
+        </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 1, background: C.border }}>
-        {[
-          { label: "Service Sales Target", val: "$58,315.72", sub: "monthly" },
-          { label: "Product Sales Target", val: "$3,900", sub: "monthly · 6.7% of service" },
-          { label: "Shop PPH Target", val: "$68.44", sub: "floor minimum" },
-          { label: "Utilization Target", val: "80–90%", sub: "shop average" },
-        ].map(s => (
-          <div key={s.label} style={{ background: C.white, padding: "14px 16px" }}>
-            <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.label}</div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: C.ink, marginTop: 4 }}>{s.val}</div>
-            <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{s.sub}</div>
+
+      <div style={{ padding: "8px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}`, fontSize: 11, color: C.muted, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+        <span>{scoredCount}/{COMPANY_METRICS.length} entered · {greenCount} on target · {stylistCount} active stylists</span>
+        {!unlocked && <span style={{ color: C.gold, fontWeight: 700 }}>🔒 Unlock a PIN tab to edit</span>}
+      </div>
+
+      {rows.map(r => (
+        <CompanyNumRow key={r.m.id}
+          label={r.m.label}
+          sub={r.m.auto
+            ? `Auto from team satisfaction · target ${STYLIST_RATING_TARGET}+/10`
+            : `Target ${r.target == null ? "—" : fmtCompany(r.m.kind, r.target)}${r.m.dir === "lower" ? " or below" : "+"}`}
+          value={r.value}
+          target={r.target}
+          green={r.green}
+          kind={r.m.kind}
+          editable={unlocked && !r.m.auto}
+          onChange={raw => setVal(r.m.id, raw)}
+        />
+      ))}
+
+      <div style={{ padding: "12px 20px", background: C.warm }}>
+        <div style={{ fontSize: 10, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>
+          {monthLabel(mk)} so far{monthTotal ? ` · service target $${monthTotal.toLocaleString()}/mo` : ""}
+        </div>
+        {rollup.every(r => r.n === 0) ? (
+          <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic" }}>No weeks entered this month yet.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {rollup.map(r => (
+              <div key={r.m.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <div style={{ width: 7, height: 7, borderRadius: 4, background: r.green === null ? C.border : r.green ? C.green : C.pink, flexShrink: 0 }} />
+                <div style={{ flex: 1, color: C.ink }}>{r.m.label} <span style={{ color: C.muted }}>({r.n} wk{r.n !== 1 ? "s" : ""}, {r.m.agg === "sum" ? "total" : "avg"})</span></div>
+                <div style={{ fontWeight: 700, color: r.green === null ? C.muted : r.green ? C.green : C.pink }}>{fmtCompany(r.m.kind, r.value)}</div>
+                <div style={{ color: C.muted, minWidth: 74, textAlign: "right" }}>/ {fmtCompany(r.m.kind, r.target)}</div>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
@@ -712,7 +855,7 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
   );
 }
 
-function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores }) {
+function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores, companyScores, onSetCompany }) {
   const activeTeam = roster.filter(m => m.active);
   const wk = latestScoredWeek(allScores); // consistent with Wins/satisfaction — the last week actually scored
 
@@ -798,7 +941,7 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
         </div>
       </div>
 
-      <CompanyScorecard />
+      <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} unlocked={unlocked} onSetCompany={onSetCompany} />
 
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 12, padding: "16px 20px" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.steel, marginBottom: 8 }}>📋 Book Control Trigger</div>
@@ -1574,6 +1717,7 @@ export default function RefineryApp() {
   const [shoutouts, setShoutouts] = useState([]);
   const [notes, setNotes] = useState({});
   const [monthlyScores, setMonthlyScores] = useState({});
+  const [companyScores, setCompanyScores] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlocked, setUnlocked] = useState(false);
@@ -1637,12 +1781,24 @@ export default function RefineryApp() {
       }
       // Missing table → stays empty, no crash.
     }
+    async function loadCompany() {
+      const { data, error } = await supabase.from("company_scores").select("*");
+      if (!error && data) {
+        const structured = {};
+        data.forEach(r => {
+          (structured[r.week_key] = structured[r.week_key] || {})[r.metric_id] = Number(r.value);
+        });
+        setCompanyScores(structured);
+      }
+      // Missing table → stays empty, no crash.
+    }
     loadRoster();
     loadScores();
     loadHolders();
     loadShoutouts();
     loadNotes();
     loadMonthly();
+    loadCompany();
   }, []);
 
   useEffect(() => {
@@ -1749,6 +1905,42 @@ export default function RefineryApp() {
     }, { onConflict: "month_key,member_id,card_type,metric_id" });
   };
 
+  useEffect(() => {
+    const channel = supabase.channel("company-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "company_scores" }, payload => {
+        const r = payload.new || payload.old;
+        if (!r) return;
+        setCompanyScores(prev => {
+          const next = { ...prev, [r.week_key]: { ...(prev[r.week_key] || {}) } };
+          if (payload.eventType === "DELETE") delete next[r.week_key][r.metric_id];
+          else next[r.week_key][r.metric_id] = Number(r.value);
+          return next;
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  const handleSetCompany = async (weekKey, metricId, value) => {
+    if (value == null) {
+      setCompanyScores(prev => {
+        const next = { ...prev, [weekKey]: { ...(prev[weekKey] || {}) } };
+        delete next[weekKey][metricId];
+        return next;
+      });
+      await supabase.from("company_scores").delete().eq("week_key", weekKey).eq("metric_id", metricId);
+      return;
+    }
+    setCompanyScores(prev => {
+      const next = { ...prev, [weekKey]: { ...(prev[weekKey] || {}) } };
+      next[weekKey][metricId] = value;
+      return next;
+    });
+    await supabase.from("company_scores").upsert({
+      week_key: weekKey, metric_id: metricId, value, updated_at: new Date().toISOString()
+    }, { onConflict: "week_key,metric_id" });
+  };
+
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
       const next = JSON.parse(JSON.stringify(prev));
@@ -1826,7 +2018,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v10</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v11</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -1845,7 +2037,7 @@ export default function RefineryApp() {
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} monthlyScores={monthlyScores} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} onSetCompany={handleSetCompany} />}
         {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} />}
