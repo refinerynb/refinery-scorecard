@@ -85,10 +85,10 @@ const SCORECARDS = {
   gm: {
     label: "Payton",
     metrics: [
-      { id: "pink_trend",       label: "Pink Team Trend (month over month)",   desc: "0 = more pink than last month · 1 = same or fewer than last month · 2 = zero pink this month", source: "Scorecard" },
+      { id: "pink_trend",       label: "Pink Team Trend (month over month)",   desc: "0 = more pink than last month · 1 = same or fewer than last month · 2 = zero pink this month", source: "Scorecard", cadence: "monthly" },
       { id: "team_kpi_avg",     label: "Team KPI Average",                     desc: "0 = <50% · 1 = 50–74% · 2 = 75%+ · Auto-calculated from this week's scores", source: "Scorecard" },
       { id: "open_issues",      label: "Open Issues",                          desc: "0 = untouched/rolled over · 1 = resolved or in progress · 2 = resolved + system created to prevent recurrence", source: "Manual" },
-      { id: "hiring",           label: "Hiring Pipeline",                      desc: "0 = 0 interviews/mo · 1 = 1/mo · 2 = 2+/mo",                 source: "Manual"    },
+      { id: "hiring",           label: "Hiring Pipeline",                      desc: "0 = 0 interviews/mo · 1 = 1/mo · 2 = 2+/mo",                 source: "Manual",    cadence: "monthly" },
       { id: "coaching_outcomes",label: "Coaching Outcomes (prior week)",       desc: "0 = coached but no change or got worse · 1 = measurable improvement but still pink · 2 = moved to green", source: "Scorecard" },
       { id: "leadership_align", label: "Leadership Team Alignment",            desc: "0 = TL or Mgr missing targets · 1 = both meeting · 2 = both exceeding", source: "Scorecard" },
     ],
@@ -96,12 +96,12 @@ const SCORECARDS = {
   owner: {
     label: "Vicki",
     metrics: [
-      { id: "revenue",          label: "Revenue vs Monthly Target",            desc: "0 = <95% of $58,315 · 1 = 95–99% · 2 = 100%+",               source: "Phorest"   },
-      { id: "profit_margin",    label: "Operating Profit Margin",              desc: "0 = below target · 1 = at target · 2 = above target",         source: "Financial" },
-      { id: "payroll_pct",      label: "Payroll %",                            desc: "0 = above target % · 1 = at target % · 2 = below target %",   source: "Financial" },
-      { id: "engagement",       label: "Employee Engagement",                  desc: "0 = any involuntary turnover · 1 = zero turnover · 2 = zero + culture activity done", source: "Manual" },
-      { id: "culture_initiatives", label: "Culture Initiatives Completed",     desc: "0 = none this month · 1 = 1 completed · 2 = 2+ completed",   source: "Manual"    },
-      { id: "leadership_obj",   label: "Leadership Objective Attainment",      desc: "0 = behind · 1 = on track · 2 = ahead + next initiative identified", source: "Manual" },
+      { id: "revenue",          label: "Revenue vs Monthly Target",            desc: "0 = <95% of $58,315 · 1 = 95–99% · 2 = 100%+",               source: "Phorest",   cadence: "monthly" },
+      { id: "profit_margin",    label: "Operating Profit Margin",              desc: "0 = below target · 1 = at target · 2 = above target",         source: "Financial", cadence: "monthly" },
+      { id: "payroll_pct",      label: "Payroll %",                            desc: "0 = above target % · 1 = at target % · 2 = below target %",   source: "Financial", cadence: "monthly" },
+      { id: "engagement",       label: "Employee Engagement",                  desc: "0 = any involuntary turnover · 1 = zero turnover · 2 = zero + culture activity done", source: "Manual", cadence: "monthly" },
+      { id: "culture_initiatives", label: "Culture Initiatives Completed",     desc: "0 = none this month · 1 = 1 completed · 2 = 2+ completed",   source: "Manual",    cadence: "monthly" },
+      { id: "leadership_obj",   label: "Leadership Objective Attainment",      desc: "0 = behind · 1 = on track · 2 = ahead + next initiative identified", source: "Manual", cadence: "monthly" },
     ],
   },
   apprentice: {
@@ -245,6 +245,11 @@ function currentMonthKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 function monthKeyOfWeek(weekKey) { return weekKey.slice(0, 7); } // month of that week's Monday
+function prevMonthKey(mk) {
+  const [y, m] = mk.split("-").map(Number);
+  const d = new Date(y, m - 2, 1); // m-1 = this month index, minus 1 more = previous
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 function monthLabel(mk) {
   const [y, m] = mk.split("-");
   return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
@@ -276,6 +281,30 @@ function calcCardPts(cardType, scores) {
 }
 function getMemberWeekPts(member, weekScores) {
   return getMemberCards(member).map(r => calcCardPts(r, weekScores?.[member.id]?.[r]));
+}
+// Monthly-aware status for a role card in a given week. Weekly metrics come from
+// that week; monthly metrics come from the week's month. Pending monthly metrics
+// don't count; the green line scales to what's knowable (green = at least a 1 on
+// every counted metric). Card is "incomplete" (null) only if a WEEKLY metric is
+// still unscored — a pending monthly metric alone doesn't block a provisional status.
+function getCardStatus(cardType, memberId, week, allScores, monthlyScores) {
+  const card = SCORECARDS[cardType];
+  const weekS = allScores?.[week]?.[memberId]?.[cardType] || {};
+  const monthS = monthlyScores?.[monthKeyOfWeek(week)]?.[memberId]?.[cardType] || {};
+  const per = card.yesNo ? 1 : 2;
+  let pts = 0, counted = 0, pending = 0, incomplete = false;
+  for (const mt of card.metrics) {
+    if (mt.handicap) { pts += per; counted++; continue; }
+    const monthly = mt.cadence === "monthly";
+    const v = monthly ? monthS[mt.id] : weekS[mt.id];
+    if (v === undefined) { if (monthly) pending++; else incomplete = true; }
+    else { pts += v; counted++; }
+  }
+  if (incomplete || counted === 0) return { pts: null, max: counted * per, counted, pending, incomplete };
+  return { pts, max: counted * per, counted, pending, incomplete: false, green: pts >= counted };
+}
+function getMemberWeekStatuses(member, week, allScores, monthlyScores) {
+  return getMemberCards(member).map(c => getCardStatus(c, member.id, week, allScores, monthlyScores));
 }
 // Bonus-pool math: base card only.
 function getMemberBonusWeekPts(member, weekScores) {
@@ -373,21 +402,42 @@ function satisfactionCount(notes, week, activeTeam) {
   return activeTeam.filter(m => typeof notes?.[week]?.[m.id]?.satisfaction === "number").length;
 }
 
-// Zeros for one specific card this week, with 13-week history + chronic flag.
-function cardZeros(memberId, cardType, allScores, week) {
+// Zero-history for one metric. Weekly metrics look back over weeks; monthly
+// metrics look back over months (so a fresh month's blank isn't counted as a miss).
+function metricZeroHistory(memberId, cardType, mt, week, allScores, monthlyScores) {
+  const monthly = mt.cadence === "monthly";
+  let scored = 0, z = 0;
+  if (monthly) {
+    let mk = monthKeyOfWeek(week);
+    for (let g = 0; g < 60 && scored < 13; g++) {
+      const v = monthlyScores?.[mk]?.[memberId]?.[cardType]?.[mt.id];
+      if (v !== undefined) { scored++; if (v === 0) z++; }
+      mk = prevMonthKey(mk);
+    }
+  } else {
+    let k = week;
+    for (let g = 0; g < 400 && scored < 13; g++) {
+      const v = allScores?.[k]?.[memberId]?.[cardType]?.[mt.id];
+      if (v !== undefined) { scored++; if (v === 0) z++; }
+      k = prevWeekKey(k);
+    }
+  }
+  const chronic = scored >= 3 && z * 2 >= scored;
+  return { z, scored, chronic, monthly };
+}
+
+// Zeros for one specific card this week, with 13-period history + chronic flag.
+function cardZeros(memberId, cardType, allScores, week, monthlyScores) {
   const cardScores = allScores?.[week]?.[memberId]?.[cardType];
+  const monthCard = monthlyScores?.[monthKeyOfWeek(week)]?.[memberId]?.[cardType];
   const zeros = [];
   SCORECARDS[cardType].metrics.forEach(mt => {
     if (mt.handicap) return;
-    if (cardScores?.[mt.id] === 0) {
-      let scored = 0, z = 0, k = week;
-      for (let g = 0; g < 400 && scored < 13; g++) {
-        const v = allScores?.[k]?.[memberId]?.[cardType]?.[mt.id];
-        if (v !== undefined) { scored++; if (v === 0) z++; }
-        k = prevWeekKey(k);
-      }
-      const chronic = scored >= 3 && z * 2 >= scored;
-      zeros.push({ label: mt.label, z, scored, chronic });
+    const monthly = mt.cadence === "monthly";
+    const cur = monthly ? monthCard?.[mt.id] : cardScores?.[mt.id];
+    if (cur === 0) {
+      const h = metricZeroHistory(memberId, cardType, mt, week, allScores, monthlyScores);
+      zeros.push({ label: mt.label, z: h.z, scored: h.scored, chronic: h.chronic, monthly });
     }
   });
   zeros.sort((a, b) => (b.chronic - a.chronic) || (b.z / b.scored - a.z / a.scored));
@@ -395,27 +445,24 @@ function cardZeros(memberId, cardType, allScores, week) {
 }
 
 // For a pink member: their pink card(s) with points, and the categories they
-// scored 0 in this week (the zeros are what pulled them under 6), each with how
-// many of the last 6 scored weeks that category was a 0.
-function pinkDetail(member, allScores, week) {
+// scored 0 in (monthly metrics judged on the month). Monthly-aware so leadership
+// cards with pending months aren't wrongly flagged pink.
+function pinkDetail(member, allScores, week, monthlyScores) {
   const multiCard = getMemberCards(member).length > 1;
   const cards = [], zeros = [];
   getMemberCards(member).forEach(cardType => {
+    const st = getCardStatus(cardType, member.id, week, allScores, monthlyScores);
+    if (st.pts === null || st.green) return; // only the pink card(s)
+    cards.push({ label: SCORECARDS[cardType].label, pts: st.pts, pending: st.pending });
     const cardScores = allScores?.[week]?.[member.id]?.[cardType];
-    const pts = calcCardPts(cardType, cardScores);
-    if (pts === null || pts >= GREEN_MIN) return; // only the pink card(s)
-    cards.push({ label: SCORECARDS[cardType].label, pts });
+    const monthCard = monthlyScores?.[monthKeyOfWeek(week)]?.[member.id]?.[cardType];
     SCORECARDS[cardType].metrics.forEach(mt => {
       if (mt.handicap) return;
-      if (cardScores?.[mt.id] === 0) {
-        let scored = 0, z = 0, k = week;
-        for (let g = 0; g < 400 && scored < 13; g++) {
-          const v = allScores?.[k]?.[member.id]?.[cardType]?.[mt.id];
-          if (v !== undefined) { scored++; if (v === 0) z++; }
-          k = prevWeekKey(k);
-        }
-        const chronic = scored >= 3 && z * 2 >= scored; // 0 in half+ of a meaningful sample
-        zeros.push({ label: (multiCard ? SCORECARDS[cardType].label + ": " : "") + mt.label, z, scored, chronic });
+      const monthly = mt.cadence === "monthly";
+      const cur = monthly ? monthCard?.[mt.id] : cardScores?.[mt.id];
+      if (cur === 0) {
+        const h = metricZeroHistory(member.id, cardType, mt, week, allScores, monthlyScores);
+        zeros.push({ label: (multiCard ? SCORECARDS[cardType].label + ": " : "") + mt.label, z: h.z, scored: h.scored, chronic: h.chronic, monthly });
       }
     });
   });
@@ -428,10 +475,17 @@ function Avatar({ name, size = 38 }) {
   return <div style={{ width: size, height: size, borderRadius: "50%", background: C.goldLight, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: size * 0.34, color: C.gold, flexShrink: 0 }}>{initials}</div>;
 }
 
-function StatusPill({ pts }) {
-  if (pts === null) return <span style={{ fontSize: 11, color: C.muted, padding: "2px 8px", borderRadius: 20, border: `1px solid ${C.border}` }}>—</span>;
-  const g = pts >= GREEN_MIN;
-  return <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: g ? C.greenLight : C.pinkLight, color: g ? C.green : C.pink }}>{g ? "🟢" : "🔴"} {pts}pts</span>;
+function StatusPill({ pts, green, pending }) {
+  if (pts === null || pts === undefined) {
+    if (pending) return <span style={{ fontSize: 11, fontWeight: 700, color: C.gold, padding: "2px 8px", borderRadius: 20, background: C.goldLight }}>pending</span>;
+    return <span style={{ fontSize: 11, color: C.muted, padding: "2px 8px", borderRadius: 20, border: `1px solid ${C.border}` }}>—</span>;
+  }
+  const g = green !== undefined ? green : pts >= GREEN_MIN;
+  return <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: g ? C.greenLight : C.pinkLight, color: g ? C.green : C.pink }}>{g ? "🟢" : "🔴"} {pts}pts{pending ? ` +${pending}?` : ""}</span>;
+}
+// Pill from a getCardStatus() result.
+function StatusPillS({ status }) {
+  return <StatusPill pts={status.pts} green={status.green} pending={status.pending} />;
 }
 
 function ScoreBtn({ val, label, current, onChange, color }) {
@@ -440,13 +494,26 @@ function ScoreBtn({ val, label, current, onChange, color }) {
   return <button onClick={() => onChange(val)} style={{ minWidth: 34, height: 34, padding: label ? "0 12px" : 0, borderRadius: 8, border: `2px solid ${active ? c : C.border}`, background: active ? c : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.12s", flexShrink: 0 }}>{label ?? val}</button>;
 }
 
-function ScorecardPanel({ member, cardType, scores, onScore }) {
+function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores, onSetMonthly }) {
   const card = SCORECARDS[cardType];
   const yesNo = !!card.yesNo;
-  const maxPts = cardMax(cardType);
-  const pts = calcCardPts(cardType, scores);
-  const filled = card.metrics.filter(m => m.handicap || scores?.[m.id] !== undefined).length;
-  const isGreen = pts !== null && pts >= GREEN_MIN;
+  const per = yesNo ? 1 : 2;
+  const monthKey = week ? monthKeyOfWeek(week) : null;
+  const monthCard = (monthKey && monthlyScores?.[monthKey]?.[member.id]?.[cardType]) || {};
+  const hasMonthly = card.metrics.some(m => m.cadence === "monthly");
+
+  // Local monthly-aware status (weekly from this week, monthly from this month).
+  let sumPts = 0, counted = 0, pending = 0, incompleteWeekly = false, filled = 0;
+  card.metrics.forEach(m => {
+    if (m.handicap) { sumPts += per; counted++; filled++; return; }
+    const monthly = m.cadence === "monthly";
+    const v = monthly ? monthCard[m.id] : scores?.[m.id];
+    if (v === undefined) { if (monthly) pending++; else incompleteWeekly = true; }
+    else { sumPts += v; counted++; filled++; }
+  });
+  const pts = (incompleteWeekly || counted === 0) ? null : sumPts;
+  const maxAvail = counted * per;
+  const isGreen = pts !== null && pts >= counted; // a 1 on every counted metric
   const targets = cardType === "stylist" ? STYLIST_TARGETS[member.id] : null;
   const options = yesNo
     ? [{ v: 0, l: "No", c: C.pink }, { v: 1, l: "Yes", c: C.green }]
@@ -461,9 +528,9 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
         </div>
         <div style={{ textAlign: "right" }}>
           {card.award
-            ? <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: C.goldLight, color: C.gold }}>{pts ?? "—"}/{maxPts} this week</span>
-            : <StatusPill pts={pts} />}
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{filled}/{card.metrics.length} scored · {pts ?? "—"}/{maxPts} pts</div>
+            ? <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: C.goldLight, color: C.gold }}>{pts ?? "—"}/{cardMax(cardType)} this week</span>
+            : <StatusPill pts={pts} green={isGreen} pending={pending} />}
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{filled}/{card.metrics.length} scored{pending ? ` · ${pending} monthly pending` : ""} · {pts ?? "—"}/{maxAvail} pts</div>
         </div>
       </div>
 
@@ -476,30 +543,37 @@ function ScorecardPanel({ member, cardType, scores, onScore }) {
       )}
 
       <div style={{ padding: "0 20px" }}>
-        {card.metrics.map((m, i) => (
+        {card.metrics.map((m, i) => {
+          const monthly = m.cadence === "monthly";
+          const curVal = monthly ? monthCard[m.id] : scores?.[m.id];
+          const monthlyPending = monthly && curVal === undefined;
+          return (
           <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: i < card.metrics.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: m.handicap ? C.muted : C.ink, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                 {m.label}
                 {m.handicap && <span style={{ fontSize: 10, background: C.goldLight, color: C.gold, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>HANDICAP</span>}
+                {monthly && <span style={{ fontSize: 10, background: C.steelLight, color: C.steel, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>MONTHLY</span>}
+                {monthlyPending && <span style={{ fontSize: 10, background: C.goldLight, color: C.gold, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>PENDING</span>}
                 {m.grace && <span style={{ fontSize: 10, background: C.steelLight, color: C.steel, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>90-DAY GRACE</span>}
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{m.desc}</div>
-              <div style={{ fontSize: 10, color: C.border, marginTop: 1 }}>Source: {m.source}</div>
+              <div style={{ fontSize: 10, color: C.border, marginTop: 1 }}>Source: {m.source}{monthly && monthKey ? ` · applies to all of ${monthLabel(monthKey)}` : ""}</div>
             </div>
             {m.handicap
               ? <div style={{ fontSize: 12, color: C.gold, fontWeight: 700, padding: "6px 10px", background: C.goldLight, borderRadius: 8, flexShrink: 0 }}>Auto 2</div>
-              : <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>{options.map(o => <ScoreBtn key={o.v} val={o.v} label={o.l} color={o.c} current={scores?.[m.id]} onChange={v => onScore(m.id, v)} />)}</div>
+              : <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>{options.map(o => <ScoreBtn key={o.v} val={o.v} label={o.l} color={o.c} current={curVal} onChange={v => monthly ? onSetMonthly(monthKey, member.id, cardType, m.id, v) : onScore(m.id, v)} />)}</div>
             }
           </div>
-        ))}
+          );
+        })}
       </div>
       <div style={{ padding: "12px 20px", background: C.warm, borderTop: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         {card.award
-          ? <div style={{ fontSize: 11, color: C.muted }}>Yes = 1 · No = 0 · Max {maxPts} · Award only — excluded from bonus pool & Green/Pink status</div>
+          ? <div style={{ fontSize: 11, color: C.muted }}>Yes = 1 · No = 0 · Max {cardMax(cardType)} · Award only — excluded from bonus pool & Green/Pink status</div>
           : <>
-              <div style={{ fontSize: 11, color: C.muted }}>Green = 6+ pts · Pink = under 6 pts · Max 12 pts</div>
-              {pts !== null && <div style={{ fontSize: 12, fontWeight: 700, color: isGreen ? C.green : C.pink }}>{isGreen ? "✓ Green Team" : "⚠ Pink Team — review next week"}</div>}
+              <div style={{ fontSize: 11, color: C.muted }}>{hasMonthly ? "Green = a 1 on every category that's in · monthly metrics count once entered · scales while pending" : "Green = 6+ pts · Pink = under 6 pts · Max 12 pts"}</div>
+              {pts !== null && <div style={{ fontSize: 12, fontWeight: 700, color: isGreen ? C.green : C.pink }}>{isGreen ? "✓ Green Team" : "⚠ Pink Team — review next week"}{pending ? ` (${pending} pending)` : ""}</div>}
             </>}
       </div>
     </div>
@@ -552,7 +626,7 @@ function TeamStatusList({ title, icon, entries, color, bg }) {
               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{e.name}</div>
               <div style={{ fontSize: 11, color: C.muted }}>{e.cardLabel}</div>
             </div>
-            <div style={{ fontSize: 13, fontWeight: 800, color }}>{e.pts ?? "—"} pts</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color }}>{e.pts ?? "—"} pts{e.pending ? <span style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}> +{e.pending}?</span> : ""}</div>
           </div>
         ))
       )}
@@ -638,23 +712,24 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
   );
 }
 
-function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes }) {
+function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores }) {
   const activeTeam = roster.filter(m => m.active);
-  const wk = currentWeekKey();
-  const ws = allScores[wk] || {};
+  const wk = latestScoredWeek(allScores); // consistent with Wins/satisfaction — the last week actually scored
 
   // Per-card entries (role cards only — Core Value never appears in Green/Pink).
+  // Monthly-aware: pending monthly metrics don't count; green scales to what's knowable.
   const entries = [];
   activeTeam.forEach(m => getMemberCards(m).forEach(card => {
-    entries.push({ key: m.id + "|" + card, name: m.name, cardLabel: SCORECARDS[card].label, pts: calcCardPts(card, ws?.[m.id]?.[card]) });
+    const st = getCardStatus(card, m.id, wk, allScores, monthlyScores);
+    entries.push({ key: m.id + "|" + card, name: m.name, cardLabel: SCORECARDS[card].label, pts: st.pts, green: st.green, pending: st.pending });
   }));
-  const greenEntries = entries.filter(e => e.pts !== null && e.pts >= GREEN_MIN);
-  const pinkEntries = entries.filter(e => e.pts !== null && e.pts < GREEN_MIN);
+  const greenEntries = entries.filter(e => e.pts !== null && e.green);
+  const pinkEntries = entries.filter(e => e.pts !== null && !e.green);
 
   // Team Flag stays people-based: how many distinct members have any pink card.
   const pinkMemberIds = new Set();
   activeTeam.forEach(m => {
-    if (getMemberCards(m).some(card => { const p = calcCardPts(card, ws?.[m.id]?.[card]); return p !== null && p < GREEN_MIN; })) pinkMemberIds.add(m.id);
+    if (getMemberCards(m).some(card => { const s = getCardStatus(card, m.id, wk, allScores, monthlyScores); return s.pts !== null && !s.green; })) pinkMemberIds.add(m.id);
   });
   const flag = pinkMemberIds.size >= 4 ? "red" : pinkMemberIds.size >= 2 ? "yellow" : "clear";
 
@@ -681,7 +756,6 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
       </div>
 
       <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)} · dual-role members are listed once per card</div>
-
       <RecognitionSection roster={roster} allScores={allScores} shoutouts={shoutouts || []} onAdd={onAddShoutout} onDelete={onDeleteShoutout} unlocked={unlocked} />
 
       {(() => {
@@ -833,7 +907,7 @@ function aggregatePhorestData(rows) {
 }
 
 
-function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote }) {
+function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const [phorestData, setPhorestData] = useState(null);
@@ -889,6 +963,9 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote }) {
             cardType={card}
             scores={allScores?.[reviewWeek]?.[sel.id]?.[card]}
             onScore={(mid, val) => onScore(reviewWeek, sel.id, card, mid, val)}
+            week={reviewWeek}
+            monthlyScores={monthlyScores}
+            onSetMonthly={onSetMonthly}
           />
         )}
 
@@ -1027,8 +1104,8 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote }) {
 
       {activeTeam.map(member => {
         const cards = getMemberCards(member);
-        const pts = getMemberWeekPts(member, allScores?.[reviewWeek] || {});
-        const done = pts.every(p => p !== null);
+        const statuses = getMemberWeekStatuses(member, reviewWeek, allScores, monthlyScores);
+        const done = statuses.every(s => s.pts !== null);
         return (
           <button key={member.id} onClick={() => { setSel(member); setCard(cards[0]); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: C.white, border: `1.5px solid ${done ? C.green : C.border}`, borderRadius: 10, cursor: "pointer", textAlign: "left" }}>
             <Avatar name={member.name} />
@@ -1036,7 +1113,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote }) {
               <div style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{member.name}</div>
               <div style={{ fontSize: 11, color: C.muted }}>{cards.map(r => SCORECARDS[r].label).join(" + ")}</div>
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pts.map((p, j) => <StatusPill key={j} pts={p} />)}</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{statuses.map((s, j) => <StatusPillS key={j} status={s} />)}</div>
           </button>
         );
       })}
@@ -1044,7 +1121,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote }) {
   );
 }
 
-function HistoryView({ roster, allScores, holders }) {
+function HistoryView({ roster, allScores, holders, monthlyScores }) {
   const activeTeam = roster.filter(m => m.active);
   const [mode, setMode] = useState("weekly");
   const [selWeek, setSelWeek] = useState(currentWeekKey());
@@ -1080,12 +1157,12 @@ function HistoryView({ roster, allScores, holders }) {
               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Week of {weekLabelFromKey(selWeek)}</div>
             </div>
             {activeTeam.map((m, i) => {
-              const pts = getMemberWeekPts(m, allScores?.[selWeek] || {});
+              const statuses = getMemberWeekStatuses(m, selWeek, allScores, monthlyScores);
               return (
                 <div key={m.id} style={{ display: "flex", alignItems: "center", padding: "11px 20px", gap: 12, borderBottom: i < activeTeam.length - 1 ? `1px solid ${C.border}` : "none", flexWrap: "wrap" }}>
                   <Avatar name={m.name} size={34} />
                   <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div><div style={{ fontSize: 11, color: C.muted }}>{getMemberCards(m).map(r => SCORECARDS[r].label).join(" + ")}</div></div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pts.map((p, j) => <StatusPill key={j} pts={p} />)}</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{statuses.map((s, j) => <StatusPillS key={j} status={s} />)}</div>
                 </div>
               );
             })}
@@ -1383,14 +1460,14 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
   );
 }
 
-function CoachingView({ roster, allScores, notes, onSetNote }) {
+function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores }) {
   const activeTeam = roster.filter(m => m.active);
   const [week, setWeek] = useState(() => latestScoredWeek(allScores));
   const [open, setOpen] = useState({});
   const avg = teamSatisfactionAvg(notes, week, activeTeam);
   const good = avg !== null && avg >= SATISFACTION_TARGET;
   const ws = allScores?.[week] || {};
-  const pink = activeTeam.filter(m => getMemberCards(m).some(c => { const p = calcCardPts(c, ws?.[m.id]?.[c]); return p !== null && p < GREEN_MIN; }));
+  const pink = activeTeam.filter(m => getMemberCards(m).some(c => { const s = getCardStatus(c, m.id, week, allScores, monthlyScores); return s.pts !== null && !s.green; }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1439,7 +1516,7 @@ function CoachingView({ roster, allScores, notes, onSetNote }) {
           <div style={{ padding: "16px 20px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>No pink team members this week 🎉</div>
         ) : (
           pink.map((m, i) => {
-            const { cards, zeros } = pinkDetail(m, allScores, week);
+            const { cards, zeros } = pinkDetail(m, allScores, week, monthlyScores);
             const isOpen = !!open[m.id];
             const nZeros = zeros.length;
             const nChronic = zeros.filter(z => z.chronic).length;
@@ -1451,7 +1528,7 @@ function CoachingView({ roster, allScores, notes, onSetNote }) {
                 <Avatar name={m.name} size={30} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}{hasNote && <span title="Has coaching note" style={{ marginLeft: 6 }}>📝</span>}</div>
-                  {cards.length > 0 && <div style={{ fontSize: 11, color: C.pink, fontWeight: 700 }}>{cards.map(c => `${c.label} ${c.pts}/12`).join(" · ")}</div>}
+                  {cards.length > 0 && <div style={{ fontSize: 11, color: C.pink, fontWeight: 700 }}>{cards.map(c => `${c.label} ${c.pts} pts${c.pending ? ` +${c.pending}?` : ""}`).join(" · ")}</div>}
                 </div>
                 {nZeros > 0 && (
                   <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: nChronic > 0 ? C.pinkLight : C.warm, color: nChronic > 0 ? C.pink : C.muted, whiteSpace: "nowrap", flexShrink: 0 }}>
@@ -1466,7 +1543,7 @@ function CoachingView({ roster, allScores, notes, onSetNote }) {
                       {zeros.map((z, j) => (
                         <div key={j} style={{ fontSize: 12, color: C.ink, padding: "2px 0", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           <strong>{z.label}</strong>
-                          <span style={{ color: z.chronic ? C.pink : C.muted, fontWeight: z.chronic ? 700 : 400 }}>— missed {z.z} of {z.scored} {z.scored === 1 ? "wk" : "wks"}</span>
+                          <span style={{ color: z.chronic ? C.pink : C.muted, fontWeight: z.chronic ? 700 : 400 }}>— missed {z.z} of {z.scored} {z.monthly ? (z.scored === 1 ? "mo" : "mos") : (z.scored === 1 ? "wk" : "wks")}</span>
                           {z.chronic && <span style={{ fontSize: 9, letterSpacing: 0.5, background: C.pink, color: C.white, padding: "1px 6px", borderRadius: 10, fontWeight: 800 }}>CHRONIC</span>}
                         </div>
                       ))}
@@ -1496,6 +1573,7 @@ export default function RefineryApp() {
   const [holders, setHolders] = useState({});
   const [shoutouts, setShoutouts] = useState([]);
   const [notes, setNotes] = useState({});
+  const [monthlyScores, setMonthlyScores] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlocked, setUnlocked] = useState(false);
@@ -1545,11 +1623,26 @@ export default function RefineryApp() {
       }
       // Missing table → stays empty, no crash.
     }
+    async function loadMonthly() {
+      const { data, error } = await supabase.from("monthly_scores").select("*");
+      if (!error && data) {
+        const structured = {};
+        data.forEach(r => {
+          const mk = structured[r.month_key] = structured[r.month_key] || {};
+          const mem = mk[r.member_id] = mk[r.member_id] || {};
+          const card = mem[r.card_type] = mem[r.card_type] || {};
+          card[r.metric_id] = r.score;
+        });
+        setMonthlyScores(structured);
+      }
+      // Missing table → stays empty, no crash.
+    }
     loadRoster();
     loadScores();
     loadHolders();
     loadShoutouts();
     loadNotes();
+    loadMonthly();
   }, []);
 
   useEffect(() => {
@@ -1623,6 +1716,37 @@ export default function RefineryApp() {
       { week_key: weekKey, member_id: memberId, ...merged, updated_at: new Date().toISOString() },
       { onConflict: "week_key,member_id" }
     );
+  };
+
+  useEffect(() => {
+    const channel = supabase.channel("monthly-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "monthly_scores" }, payload => {
+        const r = payload.new || payload.old;
+        if (!r) return;
+        setMonthlyScores(prev => {
+          const next = { ...prev, [r.month_key]: { ...(prev[r.month_key] || {}) } };
+          next[r.month_key][r.member_id] = { ...(next[r.month_key][r.member_id] || {}) };
+          next[r.month_key][r.member_id][r.card_type] = { ...(next[r.month_key][r.member_id][r.card_type] || {}) };
+          if (payload.eventType === "DELETE") delete next[r.month_key][r.member_id][r.card_type][r.metric_id];
+          else next[r.month_key][r.member_id][r.card_type][r.metric_id] = r.score;
+          return next;
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  const handleSetMonthly = async (monthKey, memberId, cardType, metricId, val) => {
+    setMonthlyScores(prev => {
+      const next = { ...prev, [monthKey]: { ...(prev[monthKey] || {}) } };
+      next[monthKey][memberId] = { ...(next[monthKey][memberId] || {}) };
+      next[monthKey][memberId][cardType] = { ...(next[monthKey][memberId][cardType] || {}) };
+      next[monthKey][memberId][cardType][metricId] = val;
+      return next;
+    });
+    await supabase.from("monthly_scores").upsert({
+      month_key: monthKey, member_id: memberId, card_type: cardType, metric_id: metricId, score: val, updated_at: new Date().toISOString()
+    }, { onConflict: "month_key,member_id,card_type,metric_id" });
   };
 
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
@@ -1702,7 +1826,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v9</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v10</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -1721,10 +1845,10 @@ export default function RefineryApp() {
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} />}
-        {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} />}
-        {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} monthlyScores={monthlyScores} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} />}
+        {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
+        {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} />}
       </div>
     </div>
