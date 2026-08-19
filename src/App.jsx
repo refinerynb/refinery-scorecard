@@ -832,9 +832,9 @@ function TeamStatusList({ title, icon, entries, color, bg }) {
 
 // Birthdays & work anniversaries falling in the current calendar month.
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function birthdayLabel(mmdd) {
-  if (!/^\d{2}-\d{2}$/.test(mmdd || "")) return "";
-  return `${MONTHS_SHORT[parseInt(mmdd.slice(0, 2), 10) - 1]} ${parseInt(mmdd.slice(3, 5), 10)}`;
+function birthdayLabel(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return "";
+  return `${MONTHS_SHORT[parseInt(iso.slice(5, 7), 10) - 1]} ${parseInt(iso.slice(8, 10), 10)}`;
 }
 function hireYearLabel(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return "";
@@ -845,9 +845,9 @@ function celebrationsThisMonth(activeTeam) {
   const y = now.getFullYear(), m = now.getMonth() + 1, todayDay = now.getDate();
   const items = [];
   activeTeam.forEach(mem => {
-    if (mem.birthday && /^\d{2}-\d{2}$/.test(mem.birthday)) {
-      const bm = parseInt(mem.birthday.slice(0, 2), 10);
-      const bd = parseInt(mem.birthday.slice(3, 5), 10);
+    if (mem.birthday && /^\d{4}-\d{2}-\d{2}$/.test(mem.birthday)) {
+      const bm = parseInt(mem.birthday.slice(5, 7), 10);
+      const bd = parseInt(mem.birthday.slice(8, 10), 10);
       if (bm === m) items.push({ id: mem.id + "-b", member: mem, type: "birthday", day: bd });
     }
     if (mem.hire_date && /^\d{4}-\d{2}-\d{2}$/.test(mem.hire_date)) {
@@ -1684,9 +1684,6 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
 
   const MemberRow = ({ m }) => {
     const isEditing = editId === m.id;
-    const bMonth = editForm.birthday ? editForm.birthday.slice(0, 2) : "";
-    const bDay = editForm.birthday ? editForm.birthday.slice(3, 5) : "";
-    const setBday = (mm, dd) => setEditForm(f => ({ ...f, birthday: (mm && dd) ? `${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}` : "" }));
     return (
       <div style={{ display: "flex", alignItems: "center", padding: "12px 20px", gap: 12, borderBottom: `1px solid ${C.border}`, flexWrap: "wrap" }}>
         <Avatar name={m.name} size={36} />
@@ -1696,12 +1693,8 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
             <select value={editForm.role} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))} style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }}>
               {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
-            <span style={{ fontSize: 10, color: C.muted }}>🎂</span>
-            <select value={bMonth} onChange={e => setBday(e.target.value, bDay)} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }}>
-              <option value="">mo</option>
-              {MONTHS_SHORT.map((mn, idx) => <option key={idx} value={String(idx + 1).padStart(2, "0")}>{mn}</option>)}
-            </select>
-            <input type="number" min="1" max="31" placeholder="day" value={bDay ? Number(bDay) : ""} onChange={e => setBday(bMonth, e.target.value)} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, width: 60 }} />
+            <span style={{ fontSize: 10, color: C.muted }}>🎂 bday</span>
+            <input type="date" value={editForm.birthday || ""} onChange={e => setEditForm(f => ({ ...f, birthday: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
             <span style={{ fontSize: 10, color: C.muted }}>🎉 hire</span>
             <input type="date" value={editForm.hire_date || ""} onChange={e => setEditForm(f => ({ ...f, hire_date: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
             <button onClick={() => { onRosterChange("update", { ...m, ...editForm }); setEditId(null); }} style={{ padding: "6px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Save</button>
@@ -1783,12 +1776,8 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
             <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} style={{ padding: "7px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }}>
               {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
-            <span style={{ fontSize: 10, color: C.muted }}>🎂</span>
-            <select value={form.birthday ? form.birthday.slice(0, 2) : ""} onChange={e => { const dd = form.birthday ? form.birthday.slice(3, 5) : ""; setForm(f => ({ ...f, birthday: (e.target.value && dd) ? `${e.target.value}-${dd}` : (e.target.value ? `${e.target.value}-01` : "") })); }} style={{ padding: "7px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }}>
-              <option value="">mo</option>
-              {MONTHS_SHORT.map((mn, idx) => <option key={idx} value={String(idx + 1).padStart(2, "0")}>{mn}</option>)}
-            </select>
-            <input type="number" min="1" max="31" placeholder="day" value={form.birthday ? Number(form.birthday.slice(3, 5)) : ""} onChange={e => { const mm = form.birthday ? form.birthday.slice(0, 2) : ""; const dd = e.target.value ? String(e.target.value).padStart(2, "0") : ""; setForm(f => ({ ...f, birthday: (mm && dd) ? `${mm}-${dd}` : f.birthday })); }} style={{ padding: "7px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, width: 60 }} />
+            <span style={{ fontSize: 10, color: C.muted }}>🎂 bday</span>
+            <input type="date" value={form.birthday || ""} onChange={e => setForm(f => ({ ...f, birthday: e.target.value }))} style={{ padding: "7px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
             <span style={{ fontSize: 10, color: C.muted }}>🎉 hire</span>
             <input type="date" value={form.hire_date || ""} onChange={e => setForm(f => ({ ...f, hire_date: e.target.value }))} style={{ padding: "7px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
             <button onClick={() => { if (form.name.trim()) { onRosterChange("add", { id: uid(), name: form.name.trim(), role: form.role, active: true, start_date: currentWeekKey(), birthday: form.birthday || null, hire_date: form.hire_date || null }); setForm({ name: "", role: "stylist" }); setAdding(false); } }} style={{ padding: "7px 16px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Add</button>
@@ -2374,7 +2363,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v13</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v14</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
