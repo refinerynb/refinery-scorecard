@@ -86,6 +86,59 @@ function fmtCompany(kind, v) {
   return String(v);
 }
 
+// ── LEADERSHIP FEEDBACK (upward feedback to Vicki & Payton) ────────────────────
+// Weekly pulse: 1–10 + feedback (required under 7). Monthly review: 0–1–2 scored
+// questions + open prompts (two always-on, plus a rotating set that changes each
+// month so the deep questions get covered a few at a time over a quarter).
+const LEADER_PULSE_TARGET = 7;
+const LEADER_SCORED_LEGEND = "0 = not effective / unclear · 1 = somewhat / inconsistent · 2 = effective / clear";
+const LEADER_SCORED_Q = [
+  { id: "expectations", label: "How clear are you on what's expected of you in your leadership role?" },
+  { id: "coaching",     label: "How effective is the coaching you receive from Vicki and Payton?" },
+  { id: "feedback",     label: "How effective are we at giving you clear, direct feedback?" },
+  { id: "support",      label: "How supported do you feel handling difficult situations or decisions?" },
+  { id: "authority",    label: "Do you feel you have enough authority to fully own your responsibilities?" },
+];
+const LEADER_OPEN_ALWAYS = [
+  { id: "clarity3",      label: "List up to 3 areas where you currently lack clarity as a leader." },
+  { id: "uncomfortable", label: "One piece of feedback you think we need to hear — even if it's uncomfortable." },
+];
+const LEADER_OPEN_SETS = [
+  { name: "Start · Stop · Continue", qs: [
+    { id: "start",    label: "One thing we should START doing as leaders." },
+    { id: "stop",     label: "One thing we should STOP doing as leaders." },
+    { id: "keep",     label: "One thing we should CONTINUE doing as leaders." },
+  ] },
+  { name: "Friction & Candor", qs: [
+    { id: "bottlenecks", label: "Where are we unintentionally creating confusion, bottlenecks, or making your job harder?" },
+    { id: "hesitate",    label: "What do you hesitate to bring to us — and why?" },
+    { id: "involvement", label: "Where are we too involved? Where are we not involved enough?" },
+  ] },
+  { name: "Growth & Capacity", qs: [
+    { id: "growth_conf", label: "How confident are you in our ability to lead the business through its next stage of growth? What influenced that?" },
+    { id: "capacity",    label: "What leadership responsibility do we currently lack the capacity to handle well?" },
+    { id: "say_do_gap",  label: "Where's the gap between what we say is important and what we actually prioritize?" },
+  ] },
+];
+function leaderOpenSetForMonth(monthKey) {
+  const m = parseInt(String(monthKey).slice(5, 7), 10) || 1;
+  return LEADER_OPEN_SETS[(m - 1) % 3];
+}
+const LEADER_Q_LABELS = (() => {
+  const map = {};
+  LEADER_SCORED_Q.forEach(q => { map[q.id] = q.label; });
+  LEADER_OPEN_ALWAYS.forEach(q => { map[q.id] = q.label; });
+  LEADER_OPEN_SETS.forEach(s => s.qs.forEach(q => { map[q.id] = q.label; }));
+  return map;
+})();
+const LEADER_SCORED_IDS = LEADER_SCORED_Q.map(q => q.id);
+function leaderMonthlyDone(data) {
+  return LEADER_SCORED_Q.every(q => typeof data?.[q.id] === "number");
+}
+function isLeader(member) {
+  return LEADERSHIP_ROLES.includes(member.role);
+}
+
 const SCORECARDS = {
   stylist: {
     label: "Stylist",
@@ -1050,7 +1103,101 @@ function aggregatePhorestData(rows) {
 }
 
 
-function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany }) {
+function Lead012({ value, onPick }) {
+  return (
+    <div style={{ display: "flex", gap: 5 }}>
+      {[0, 1, 2].map(v => {
+        const active = value === v;
+        return (
+          <button key={v} onClick={() => onPick(v)} style={{ width: 34, height: 34, borderRadius: 8, border: `2px solid ${active ? SCORE_COLOR[v] : C.border}`, background: active ? SCORE_COLOR[v] : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>{v}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+function LeadershipFeedbackPanel({ member, week, monthKey, pulse, monthly, onSetPulse, onSetMonthly }) {
+  const [pending, setPending] = useState(null);
+  const [open, setOpen] = useState(false);
+  const savedScore = pulse?.score;
+  const savedFb = pulse?.feedback || "";
+  const effScore = pending != null ? pending : savedScore;
+  const needFb = effScore != null && effScore < LEADER_PULSE_TARGET && !savedFb.trim();
+  const pickScore = v => {
+    if (v >= LEADER_PULSE_TARGET || savedFb.trim()) { onSetPulse(week, member.id, { score: v }); setPending(null); }
+    else setPending(v);
+  };
+  const onFb = text => {
+    if (pending != null && text.trim()) { onSetPulse(week, member.id, { score: pending, feedback: text }); setPending(null); }
+    else onSetPulse(week, member.id, { feedback: text });
+  };
+  const md = monthly || {};
+  const done = leaderMonthlyDone(md);
+  const openSet = leaderOpenSetForMonth(monthKey);
+  const openQs = [...LEADER_OPEN_ALWAYS, ...openSet.qs];
+
+  return (
+    <div style={{ background: C.white, border: `1.5px solid ${C.gold}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "12px 20px", background: C.goldLight, borderBottom: `1.5px solid ${C.gold}44` }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.gold }}>Leadership Feedback</div>
+        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Your feedback up to Vicki &amp; Payton — how supported and coached you feel in this role.</div>
+      </div>
+
+      <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 8 }}>This week: how supported &amp; well-coached did you feel? (1–10)</div>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(nval => {
+            const active = effScore === nval;
+            const good = nval >= LEADER_PULSE_TARGET;
+            return (
+              <button key={nval} onClick={() => pickScore(nval)} style={{ width: 34, height: 34, borderRadius: 8, border: `2px solid ${active ? (good ? C.green : C.gold) : C.border}`, background: active ? (good ? C.green : C.gold) : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{nval}</button>
+            );
+          })}
+        </div>
+        {needFb && (
+          <div style={{ fontSize: 11, color: C.pink, fontWeight: 700, marginBottom: 6 }}>
+            ⚠ A reason is required for a rating under {LEADER_PULSE_TARGET}.{pending != null ? " The rating won't save until you add feedback." : ""}
+          </div>
+        )}
+        <textarea value={savedFb} onChange={e => onFb(e.target.value)}
+          placeholder={needFb ? `Required: what would make this a ${LEADER_PULSE_TARGET}+ next week?` : "Optional: anything on your mind this week…"}
+          rows={2}
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${needFb ? C.pink : C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+      </div>
+
+      <button onClick={() => setOpen(o => !o)} style={{ width: "100%", padding: "12px 20px", background: C.warm, border: "none", borderBottom: open ? `1px solid ${C.border}` : "none", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", textAlign: "left" }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>{open ? "▾" : "▸"} Monthly Leadership Review — {monthLabel(monthKey)}</div>
+          <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>This month's deep-dive: {openSet.name}</div>
+        </div>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: done ? C.greenLight : C.goldLight, color: done ? C.green : C.gold }}>{done ? "✓ done" : "not started"}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: "14px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic" }}>{LEADER_SCORED_LEGEND}</div>
+          {LEADER_SCORED_Q.map(q => (
+            <div key={q.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 180, fontSize: 12, color: C.ink, fontWeight: 600 }}>{q.label}</div>
+              <Lead012 value={typeof md[q.id] === "number" ? md[q.id] : undefined} onPick={v => onSetMonthly(monthKey, member.id, { [q.id]: v })} />
+            </div>
+          ))}
+          <div style={{ height: 1, background: C.border }} />
+          {openQs.map(q => (
+            <div key={q.id}>
+              <div style={{ fontSize: 12, color: C.ink, fontWeight: 600, marginBottom: 6 }}>{q.label}</div>
+              <textarea value={md[q.id] || ""} onChange={e => onSetMonthly(monthKey, member.id, { [q.id]: e.target.value })}
+                rows={2} placeholder="Your answer (optional)…"
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const [phorestData, setPhorestData] = useState(null);
@@ -1158,6 +1305,18 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
             </div>
           );
         })()}
+
+        {isLeader(sel) && (
+          <LeadershipFeedbackPanel
+            member={sel}
+            week={reviewWeek}
+            monthKey={mk}
+            pulse={leadershipFb?.pulse?.[reviewWeek]?.[sel.id]}
+            monthly={leadershipFb?.monthly?.[mk]?.[sel.id]}
+            onSetPulse={onSetLeaderPulse}
+            onSetMonthly={onSetLeaderMonthly}
+          />
+        )}
       </div>
     );
   }
@@ -1606,7 +1765,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
   );
 }
 
-function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores }) {
+function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, leadershipFb }) {
   const activeTeam = roster.filter(m => m.active);
   const [week, setWeek] = useState(() => latestScoredWeek(allScores));
   const [open, setOpen] = useState({});
@@ -1651,6 +1810,70 @@ function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores }) {
           );
         })}
       </div>
+
+      {/* Leadership feedback review (upward to Vicki & Payton) */}
+      {(() => {
+        const mk = monthKeyOfWeek(week);
+        const leaders = activeTeam.filter(isLeader);
+        const pulses = leaders.map(m => leadershipFb?.pulse?.[week]?.[m.id]?.score).filter(v => typeof v === "number");
+        const pAvg = pulses.length ? Math.round((pulses.reduce((a, b) => a + b, 0) / pulses.length) * 10) / 10 : null;
+        const pGood = pAvg !== null && pAvg >= LEADER_PULSE_TARGET;
+        return (
+          <div style={{ background: C.white, border: `1.5px solid ${C.gold}`, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "12px 20px", background: C.goldLight, borderBottom: `1.5px solid ${C.gold}44`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.gold }}>Leadership Feedback</div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Upward from leaders · week pulse + {monthLabel(mk)} review</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: pAvg === null ? C.muted : pGood ? C.green : C.pink }}>{pAvg === null ? "No pulses" : `Pulse avg ${pAvg}/10`}</div>
+            </div>
+            {leaders.length === 0 && <div style={{ padding: "12px 20px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>No leaders on the roster.</div>}
+            {leaders.map((m, i) => {
+              const p = leadershipFb?.pulse?.[week]?.[m.id] || {};
+              const md = leadershipFb?.monthly?.[mk]?.[m.id] || {};
+              const hasMonthly = Object.keys(md).length > 0;
+              const mDone = leaderMonthlyDone(md);
+              const isOpen = open[`lead-${m.id}`];
+              const openAnswers = Object.keys(md).filter(k => !LEADER_SCORED_IDS.includes(k) && typeof md[k] === "string" && md[k].trim());
+              return (
+                <div key={m.id} style={{ borderBottom: i < leaders.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 20px" }}>
+                    <Avatar name={m.name} size={30} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+                      {p.feedback ? <div style={{ fontSize: 12, color: C.ink, marginTop: 2 }}>{p.feedback}</div> : <div style={{ fontSize: 11, color: C.muted, fontStyle: "italic", marginTop: 2 }}>No weekly note</div>}
+                      {hasMonthly && (
+                        <button onClick={() => setOpen(o => ({ ...o, [`lead-${m.id}`]: !o[`lead-${m.id}`] }))} style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, color: C.gold }}>
+                          {isOpen ? "▾" : "▸"} {monthLabel(mk)} review {mDone ? "✓" : "(in progress)"}
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: typeof p.score !== "number" ? C.border : p.score >= LEADER_PULSE_TARGET ? C.green : C.pink, flexShrink: 0 }}>
+                      {typeof p.score === "number" ? `${p.score}/10` : "—"}
+                    </div>
+                  </div>
+                  {isOpen && hasMonthly && (
+                    <div style={{ padding: "0 20px 12px 60px", display: "flex", flexDirection: "column", gap: 8 }}>
+                      {LEADER_SCORED_Q.filter(q => typeof md[q.id] === "number").map(q => (
+                        <div key={q.id} style={{ fontSize: 12, display: "flex", gap: 8 }}>
+                          <span style={{ fontWeight: 800, color: md[q.id] === 2 ? C.green : md[q.id] === 1 ? C.gold : C.pink }}>{md[q.id]}</span>
+                          <span style={{ color: C.muted }}>{q.label}</span>
+                        </div>
+                      ))}
+                      {openAnswers.map(k => (
+                        <div key={k} style={{ fontSize: 12 }}>
+                          <div style={{ color: C.muted, fontWeight: 600 }}>{LEADER_Q_LABELS[k] || k}</div>
+                          <div style={{ color: C.ink, marginTop: 1 }}>{md[k]}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* Pink team coaching notes */}
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -1721,6 +1944,7 @@ export default function RefineryApp() {
   const [notes, setNotes] = useState({});
   const [monthlyScores, setMonthlyScores] = useState({});
   const [companyScores, setCompanyScores] = useState({});
+  const [leadershipFb, setLeadershipFb] = useState({ pulse: {}, monthly: {} });
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlocked, setUnlocked] = useState(false);
@@ -1795,6 +2019,18 @@ export default function RefineryApp() {
       }
       // Missing table → stays empty, no crash.
     }
+    async function loadLeadership() {
+      const { data, error } = await supabase.from("leadership_feedback").select("*");
+      if (!error && data) {
+        const pulse = {}, monthly = {};
+        data.forEach(r => {
+          const bucket = r.kind === "pulse" ? pulse : monthly;
+          (bucket[r.period_key] = bucket[r.period_key] || {})[r.member_id] = r.data || {};
+        });
+        setLeadershipFb({ pulse, monthly });
+      }
+      // Missing table → stays empty, no crash.
+    }
     loadRoster();
     loadScores();
     loadHolders();
@@ -1802,6 +2038,7 @@ export default function RefineryApp() {
     loadNotes();
     loadMonthly();
     loadCompany();
+    loadLeadership();
   }, []);
 
   useEffect(() => {
@@ -1944,6 +2181,40 @@ export default function RefineryApp() {
     }, { onConflict: "week_key,metric_id" });
   };
 
+  useEffect(() => {
+    const channel = supabase.channel("leadership-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "leadership_feedback" }, payload => {
+        const r = payload.new || payload.old;
+        if (!r) return;
+        setLeadershipFb(prev => {
+          const bucketName = r.kind === "pulse" ? "pulse" : "monthly";
+          const bucket = { ...prev[bucketName], [r.period_key]: { ...(prev[bucketName]?.[r.period_key] || {}) } };
+          if (payload.eventType === "DELETE") delete bucket[r.period_key][r.member_id];
+          else bucket[r.period_key][r.member_id] = r.data || {};
+          return { ...prev, [bucketName]: bucket };
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  const setLeaderRow = async (kind, periodKey, memberId, patch) => {
+    const bucketName = kind === "pulse" ? "pulse" : "monthly";
+    const existing = leadershipFb?.[bucketName]?.[periodKey]?.[memberId] || {};
+    const merged = { ...existing, ...patch };
+    setLeadershipFb(prev => {
+      const bucket = { ...prev[bucketName], [periodKey]: { ...(prev[bucketName]?.[periodKey] || {}) } };
+      bucket[periodKey][memberId] = merged;
+      return { ...prev, [bucketName]: bucket };
+    });
+    await supabase.from("leadership_feedback").upsert(
+      { period_key: periodKey, member_id: memberId, kind, data: merged, updated_at: new Date().toISOString() },
+      { onConflict: "period_key,member_id,kind" }
+    );
+  };
+  const handleSetLeaderPulse = (weekKey, memberId, patch) => setLeaderRow("pulse", weekKey, memberId, patch);
+  const handleSetLeaderMonthly = (monthKey, memberId, patch) => setLeaderRow("monthly", monthKey, memberId, patch);
+
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
       const next = JSON.parse(JSON.stringify(prev));
@@ -2021,7 +2292,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v11</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v12</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -2041,9 +2312,9 @@ export default function RefineryApp() {
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
         {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
-        {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} />}
+        {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} />}
       </div>
     </div>
