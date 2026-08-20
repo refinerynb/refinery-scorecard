@@ -243,14 +243,18 @@ const SCORE_COLOR = { 0: C.pink, 1: C.gold, 2: C.green };
 const MAX_PTS = 12;
 const GREEN_MIN = 6;
 const START_DATE = "2026-06-23";
-const APP_PIN = "2363";
+const SCORE_PIN = "2363";
+const ADMIN_PIN = "2026";
+const PIN_GROUP = { score: "score", coaching: "admin", roster: "admin" };
+const PIN_FOR = { score: SCORE_PIN, admin: ADMIN_PIN };
+const PIN_LABEL = { score: "Required to score this week", admin: "Manager access — Coaching & Roster" };
 
-function PinLock({ onUnlock }) {
+function PinLock({ expectedPin, label, onUnlock }) {
   const [input, setInput] = useState("");
   const [error, setError] = useState(false);
 
   const submit = () => {
-    if (input === APP_PIN) {
+    if (input === expectedPin) {
       onUnlock();
     } else {
       setError(true);
@@ -264,7 +268,7 @@ function PinLock({ onUnlock }) {
       <div style={{ background: C.white, borderRadius: 16, border: `1.5px solid ${C.border}`, padding: "32px 28px", maxWidth: 320, width: "100%", textAlign: "center" }}>
         <div style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>The Refinery</div>
         <div style={{ fontSize: 18, fontWeight: 800, color: C.ink, marginBottom: 4 }}>Enter PIN to Continue</div>
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 20 }}>Required to score or manage the roster</div>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 20 }}>{label || "Required to score or manage the roster"}</div>
         <input
           type="password"
           inputMode="numeric"
@@ -415,6 +419,23 @@ function getMemberBonusWeekPts(member, weekScores) {
 }
 function getMemberCumulativePts(member, allScores) {
   return Object.values(allScores).reduce((t, ws) => t + (getMemberBonusWeekPts(member, ws) ?? 0), 0);
+}
+function isStylist(member) { return getMemberCards(member).includes("stylist"); }
+function memberYearPts(member, allScores, year) {
+  return Object.keys(allScores || {}).filter(wk => getYear(wk) === year)
+    .reduce((t, wk) => t + (getMemberBonusWeekPts(member, allScores[wk]) ?? 0), 0);
+}
+function memberQuarterPts(member, allScores, year, q) {
+  return Object.keys(allScores || {}).filter(wk => getYear(wk) === year && getQuarter(wk) === q)
+    .reduce((t, wk) => t + (getMemberBonusWeekPts(member, allScores[wk]) ?? 0), 0);
+}
+function memberYearGreen(member, allScores, year) {
+  let green = 0, scored = 0;
+  Object.keys(allScores || {}).filter(wk => getYear(wk) === year).forEach(wk => {
+    const p = getMemberBonusWeekPts(member, allScores[wk]);
+    if (p !== null) { scored++; if (p >= GREEN_MIN) green++; }
+  });
+  return { green, scored };
 }
 // Core Value running total for a holder across a calendar month (null weeks count as 0).
 function monthCoreValueTotal(memberId, monthKey, allScores) {
@@ -840,6 +861,29 @@ function hireYearLabel(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return "";
   return `Hired ${MONTHS_SHORT[parseInt(iso.slice(5, 7), 10) - 1]} ${iso.slice(0, 4)}`;
 }
+function isoLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function dateLabel(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${MONTHS_SHORT[m - 1]} ${d}, ${y}`;
+}
+// PTO eligibility & current anniversary-year period. Eligible at 1 year; the
+// "used" flag is stored against the current period key so it auto-resets (use it
+// or lose it) when the next work anniversary rolls the period forward.
+function ptoStatus(member) {
+  const hd = member.hire_date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(hd || "")) return { hasDate: false, eligible: false };
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const [hy, hm, hdd] = hd.split("-").map(Number);
+  let ps = new Date(now.getFullYear(), hm - 1, hdd);
+  if (ps > now) ps = new Date(now.getFullYear() - 1, hm - 1, hdd);
+  const years = ps.getFullYear() - hy;
+  const eligible = years >= 1;
+  const firstAnniv = new Date(hy + 1, hm - 1, hdd);
+  return { hasDate: true, eligible, years, periodKey: isoLocal(ps), periodStartYear: ps.getFullYear(), firstAnnivKey: isoLocal(firstAnniv) };
+}
 function celebrationsThisMonth(activeTeam) {
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth() + 1, todayDay = now.getDate();
@@ -888,6 +932,56 @@ function CelebrationsCard({ roster }) {
               </div>
             );
           })}
+    </div>
+  );
+}
+
+function TimeOffCard({ roster }) {
+  const activeTeam = roster.filter(m => m.active);
+  const rows = activeTeam.filter(m => /^\d{4}-\d{2}-\d{2}$/.test(m.hire_date || ""));
+  if (rows.length === 0) return null;
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  return (
+    <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "12px 20px", background: C.steelLight, borderBottom: `1.5px solid ${C.border}` }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.steel }}>🌴 Time Off</div>
+        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>PTO unlocks at 1 year · one week, use it or lose it (resets each work anniversary)</div>
+      </div>
+      {rows.map((m, i) => {
+        const st = ptoStatus(m);
+        const last = i === rows.length - 1;
+        const rowStyle = { display: "flex", alignItems: "center", gap: 10, padding: "11px 20px", borderBottom: last ? "none" : `1px solid ${C.border}` };
+        if (st.eligible) {
+          const used = m.pto_used_year === st.periodKey;
+          return (
+            <div key={m.id} style={rowStyle}>
+              <Avatar name={m.name} size={30} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>{st.periodStartYear}–{String(st.periodStartYear + 1).slice(2)} PTO year</div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 12px", borderRadius: 20, background: used ? C.warm : C.greenLight, color: used ? C.muted : C.green, border: used ? `1px solid ${C.border}` : "none" }}>
+                {used ? "Used this year" : "✓ Available"}
+              </span>
+            </div>
+          );
+        }
+        const hire = new Date(m.hire_date + "T00:00:00");
+        const days = Math.max(0, Math.floor((now - hire) / 86400000));
+        const pct = Math.min(100, Math.round((days / 365) * 100));
+        return (
+          <div key={m.id} style={rowStyle}>
+            <Avatar name={m.name} size={30} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+              <div style={{ height: 6, background: C.border, borderRadius: 3, marginTop: 5, overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", background: C.gold }} />
+              </div>
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.gold, textAlign: "right", flexShrink: 0 }}>Unlocks {dateLabel(st.firstAnnivKey)}<br /><span style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{pct}% there</span></span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1260,9 +1354,108 @@ function LeadershipFeedbackPanel({ member, week, monthKey, pulse, monthly, onSet
   );
 }
 
-function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly }) {
+function RewardCard({ title, icon, children, tone }) {
+  const bar = tone === "gold" ? C.gold : tone === "green" ? C.green : C.steel;
+  const bg = tone === "gold" ? C.goldLight : tone === "green" ? C.greenLight : C.steelLight;
+  return (
+    <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "10px 18px", background: bg, borderBottom: `1.5px solid ${C.border}`, fontSize: 12, fontWeight: 800, color: bar }}>{icon} {title}</div>
+      <div style={{ padding: "14px 18px" }}>{children}</div>
+    </div>
+  );
+}
+
+function RewardsPanel({ member, allScores, roster, poolEstimate }) {
+  const year = String(new Date().getFullYear());
+  const q = Math.ceil((new Date().getMonth() + 1) / 3);
+  const stylist = isStylist(member);
+  const stylists = roster.filter(m => m.active && isStylist(m));
+
+  const myYear = memberYearPts(member, allScores, year);
+  const totalYear = stylists.reduce((t, s) => t + memberYearPts(s, allScores, year), 0);
+  const share = totalYear > 0 ? myYear / totalYear : 0;
+  const est = poolEstimate * share;
+
+  const qRanked = stylists.map(s => ({ id: s.id, name: s.name, pts: memberQuarterPts(s, allScores, year, q) })).sort((a, b) => b.pts - a.pts);
+  const myRank = qRanked.findIndex(x => x.id === member.id) + 1;
+  const myQ = qRanked.find(x => x.id === member.id)?.pts ?? memberQuarterPts(member, allScores, year, q);
+  const leader = qRanked[0];
+  const leading = myRank === 1 && myQ > 0;
+
+  const { green, scored } = memberYearGreen(member, allScores, year);
+  const greenPct = scored > 0 ? Math.round((green / scored) * 100) : 0;
+  const inducted = !!member.club_100;
+
+  const pto = ptoStatus(member);
+  const ptoUsed = pto.eligible && member.pto_used_year === pto.periodKey;
+
+  const money = n => "$" + Math.round(n).toLocaleString();
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ background: C.ink, borderRadius: 12, padding: "16px 20px" }}>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery · Rewards</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.white }}>{member.name}</div>
+        <div style={{ fontSize: 11, color: "#bbb", marginTop: 2 }}>Where you stand this year — {year}</div>
+      </div>
+
+      {!stylist && (
+        <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic", padding: "0 4px" }}>The bonus pool, STRA-tegic Champion and 100 Club are stylist programs. Your Time Off is below.</div>
+      )}
+
+      {stylist && (
+        <RewardCard title="Bonus Pool — estimated year-end share" icon="💰" tone="gold">
+          {poolEstimate > 0
+            ? <>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.ink }}>{money(est)}</div>
+                <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{Math.round(share * 100)}% of the pool · {myYear} pts of {totalYear} team pts</div>
+                <div style={{ height: 8, background: C.border, borderRadius: 4, marginTop: 10, overflow: "hidden" }}><div style={{ width: `${Math.round(share * 100)}%`, height: "100%", background: C.gold }} /></div>
+                <div style={{ fontSize: 10, color: C.muted, marginTop: 8, fontStyle: "italic" }}>Estimate only — the pool is a share of shop net profit and shifts as points and profit change through the year.</div>
+              </>
+            : <div style={{ fontSize: 13, color: C.muted }}>Your share is <strong>{Math.round(share * 100)}%</strong> of the pool ({myYear} of {totalYear} team pts). Dollar estimate appears once the pool amount is set.</div>}
+        </RewardCard>
+      )}
+
+      {stylist && (
+        <RewardCard title={`STRA-tegic Champion — Q${q} ${year}`} icon="🏆" tone={leading ? "gold" : "steel"}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: leading ? C.gold : C.ink }}>{leading ? "🥇 You're leading!" : myRank > 0 ? `Rank #${myRank} of ${qRanked.length}` : "—"}</div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{myQ} KPI pts this quarter</div>
+            </div>
+            {!leading && leader && leader.pts > 0 && (
+              <div style={{ textAlign: "right", fontSize: 11, color: C.muted }}>Leader<br /><strong style={{ color: C.ink }}>{leader.name}</strong> · {leader.pts} pts<br /><span style={{ color: C.gold, fontWeight: 700 }}>{Math.max(0, leader.pts - myQ)} to catch up</span></div>
+            )}
+          </div>
+          <div style={{ fontSize: 10, color: C.muted, marginTop: 10, fontStyle: "italic" }}>Highest quarter KPI points wins; the champion picks from the incentive list.</div>
+        </RewardCard>
+      )}
+
+      {stylist && (
+        <RewardCard title="100 Club — mastery, all year" icon="⭐" tone={inducted ? "gold" : "steel"}>
+          {inducted && <div style={{ fontSize: 13, fontWeight: 800, color: C.gold, marginBottom: 8 }}>🧥 Active 100 Club Member{typeof member.club_100 === "string" && member.club_100.length === 4 ? ` · since ${member.club_100}` : ""}</div>}
+          <div style={{ fontSize: 12, color: C.ink, fontWeight: 600 }}>Green Team all year — {green} of {scored} weeks green ({greenPct}%)</div>
+          <div style={{ height: 8, background: C.border, borderRadius: 4, marginTop: 8, overflow: "hidden" }}><div style={{ width: `${greenPct}%`, height: "100%", background: greenPct >= 100 ? C.green : C.gold }} /></div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 10 }}>Also required (reviewed by leadership):</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 3, lineHeight: 1.7 }}>· Healthy capacity threshold<br />· Guest satisfaction &amp; retention<br />· Living the core values</div>
+        </RewardCard>
+      )}
+
+      <RewardCard title="Paid Time Off" icon="🌴" tone={pto.eligible && !ptoUsed ? "green" : "steel"}>
+        {!pto.hasDate
+          ? <div style={{ fontSize: 13, color: C.muted }}>Add your hire date in Roster to track PTO.</div>
+          : !pto.eligible
+            ? <div style={{ fontSize: 13, color: C.ink }}>Unlocks at 1 year — <strong>{dateLabel(pto.firstAnnivKey)}</strong>.</div>
+            : <div style={{ fontSize: 15, fontWeight: 800, color: ptoUsed ? C.muted : C.green }}>{ptoUsed ? "Used this year" : "✓ Your week is available"}<div style={{ fontSize: 11, color: C.muted, fontWeight: 600, marginTop: 2 }}>{pto.periodStartYear}–{String(pto.periodStartYear + 1).slice(2)} · use it or lose it</div></div>}
+      </RewardCard>
+    </div>
+  );
+}
+
+function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly, poolEstimate }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
+  const [detailMode, setDetailMode] = useState("score");
   const [phorestData, setPhorestData] = useState(null);
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState(null);
@@ -1304,13 +1497,19 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <button onClick={() => { setSel(null); setCard(null); }} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 13, cursor: "pointer", color: C.ink, fontWeight: 600 }}>← Back</button>
           <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{sel.name}</div>
-          {cards.map(r => (
+          <div style={{ display: "flex", gap: 2, marginLeft: 4, background: C.warm, borderRadius: 8, padding: 2 }}>
+            {[["score", "Scorecard"], ["rewards", "Rewards"]].map(([mv, ml]) => (
+              <button key={mv} onClick={() => setDetailMode(mv)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: detailMode === mv ? C.ink : "transparent", color: detailMode === mv ? C.white : C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{ml}</button>
+            ))}
+          </div>
+          {detailMode === "score" && cards.map(r => (
             <button key={r} onClick={() => setCard(r)} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${card === r ? C.gold : C.border}`, background: card === r ? C.goldLight : C.white, fontSize: 12, cursor: "pointer", fontWeight: card === r ? 700 : 500, color: card === r ? C.gold : C.muted }}>
               {SCORECARDS[r].label} Card
             </button>
           ))}
         </div>
-        {card && (
+        {detailMode === "rewards" && <RewardsPanel member={sel} allScores={allScores} roster={roster} poolEstimate={poolEstimate} />}
+        {detailMode === "score" && card && (
           <ScorecardPanel
             member={sel}
             cardType={card}
@@ -1323,7 +1522,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
         )}
 
         {/* Team satisfaction + private feedback — per person, per week */}
-        {(() => {
+        {detailMode === "score" && (() => {
           const savedSat = notes?.[reviewWeek]?.[sel.id]?.satisfaction;
           const savedFb = notes?.[reviewWeek]?.[sel.id]?.feedback || "";
           const effectiveSat = satPending != null ? satPending : savedSat;
@@ -1369,7 +1568,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
           );
         })()}
 
-        {isLeader(sel) && (
+        {detailMode === "score" && isLeader(sel) && (
           <LeadershipFeedbackPanel
             member={sel}
             week={reviewWeek}
@@ -1472,7 +1671,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
         const statuses = getMemberWeekStatuses(member, reviewWeek, allScores, monthlyScores);
         const done = statuses.every(s => s.pts !== null);
         return (
-          <button key={member.id} onClick={() => { setSel(member); setCard(cards[0]); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: C.white, border: `1.5px solid ${done ? C.green : C.border}`, borderRadius: 10, cursor: "pointer", textAlign: "left" }}>
+          <button key={member.id} onClick={() => { setSel(member); setCard(cards[0]); setDetailMode("score"); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: C.white, border: `1.5px solid ${done ? C.green : C.border}`, borderRadius: 10, cursor: "pointer", textAlign: "left" }}>
             <Avatar name={member.name} />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{member.name}</div>
@@ -1640,7 +1839,7 @@ function HistoryView({ roster, allScores, holders, monthlyScores }) {
   );
 }
 
-function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, onClearWeek }) {
+function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, onClearWeek, poolEstimate, onSetPoolEstimate }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: "", role: "stylist" });
   const [editId, setEditId] = useState(null);
@@ -1697,6 +1896,8 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
             <input type="date" value={editForm.birthday || ""} onChange={e => setEditForm(f => ({ ...f, birthday: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
             <span style={{ fontSize: 10, color: C.muted }}>🎉 hire</span>
             <input type="date" value={editForm.hire_date || ""} onChange={e => setEditForm(f => ({ ...f, hire_date: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+            <span style={{ fontSize: 10, color: C.muted }}>🌴 PTO $</span>
+            <input placeholder="amount" value={editForm.pto_amount || ""} onChange={e => setEditForm(f => ({ ...f, pto_amount: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, width: 80 }} />
             <button onClick={() => { onRosterChange("update", { ...m, ...editForm }); setEditId(null); }} style={{ padding: "6px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Save</button>
             <button onClick={() => setEditId(null)} style={{ padding: "6px 14px", borderRadius: 8, background: C.border, color: C.ink, border: "none", fontSize: 12, cursor: "pointer" }}>Cancel</button>
           </div>
@@ -1707,7 +1908,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
               <div style={{ fontSize: 11, color: C.muted }}>{ROLE_OPTIONS.find(r => r.value === m.role)?.label}{m.start_date ? ` · Started ${weekLabelFromKey(m.start_date)}` : ""}{m.birthday ? ` · 🎂 ${birthdayLabel(m.birthday)}` : ""}{m.hire_date ? ` · 🎉 ${hireYearLabel(m.hire_date)}` : ""}</div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => { setEditId(m.id); setEditForm({ name: m.name, role: m.role, birthday: m.birthday || "", hire_date: m.hire_date || "" }); }} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 11, cursor: "pointer", color: C.muted }}>Edit</button>
+              <button onClick={() => { setEditId(m.id); setEditForm({ name: m.name, role: m.role, birthday: m.birthday || "", hire_date: m.hire_date || "", pto_amount: m.pto_amount || "" }); }} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 11, cursor: "pointer", color: C.muted }}>Edit</button>
               <button onClick={() => onRosterChange("toggle", m)} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${m.active ? C.pink : C.green}`, background: m.active ? C.pinkLight : C.greenLight, fontSize: 11, cursor: "pointer", fontWeight: 700, color: m.active ? C.pink : C.green }}>
                 {m.active ? "Deactivate" : "Activate"}
               </button>
@@ -1794,6 +1995,55 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
           {inactive.map(m => <MemberRow key={m.id} m={m} />)}
         </div>
       )}
+
+      {/* Bonus pool estimate — shop-wide, feeds each stylist's Rewards tab */}
+      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>💰 Bonus Pool Estimate</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Shop-wide $ pool for the year (a share of net profit — update it as you review the P&L). Split by each stylist's cumulative-points share and shown as an estimate on their Rewards tab.</div>
+        </div>
+        <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Estimated pool $</span>
+          <input type="number" inputMode="decimal" value={poolEstimate} onChange={e => onSetPoolEstimate(e.target.value)} placeholder="e.g. 12000" style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, fontWeight: 700, width: 140 }} />
+          {poolEstimate ? <span style={{ fontSize: 12, color: C.muted }}>= ${Number(poolEstimate).toLocaleString()} to split</span> : null}
+        </div>
+      </div>
+
+      {/* Rewards & PTO — 100 Club induction + PTO usage per person */}
+      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>🏆 Rewards &amp; Time Off</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>100 Club is your call (induct when someone's met the full standard) · PTO unlocks at 1 year, use it or lose it. Set the PTO $ amount in a member's Edit.</div>
+        </div>
+        {active.map((m, i) => {
+          const st = ptoStatus(m);
+          const last = i === active.length - 1;
+          const inducted = !!m.club_100;
+          const used = st.eligible && m.pto_used_year === st.periodKey;
+          const subline = st.eligible
+            ? `PTO ${st.periodStartYear}–${String(st.periodStartYear + 1).slice(2)} · ${m.pto_amount ? `$${m.pto_amount}` : "amount not set"}`
+            : st.hasDate ? `PTO eligible ${dateLabel(st.firstAnnivKey)}` : "Add a hire date for PTO";
+          return (
+            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 20px", borderBottom: last ? "none" : `1px solid ${C.border}`, flexWrap: "wrap" }}>
+              <Avatar name={m.name} size={28} />
+              <div style={{ flex: 1, minWidth: 120 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>{subline}</div>
+              </div>
+              <button onClick={() => onRosterChange("update", { ...m, club_100: inducted ? "" : String(new Date().getFullYear()) })}
+                style={{ padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${inducted ? C.gold : C.border}`, background: inducted ? C.goldLight : C.white, color: inducted ? C.gold : C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                {inducted ? "⭐ 100 Club" : "100 Club"}
+              </button>
+              {st.eligible && (
+                <button onClick={() => onRosterChange("update", { ...m, pto_used_year: used ? "" : st.periodKey })}
+                  style={{ padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${used ? C.pink : C.green}`, background: used ? C.pinkLight : C.greenLight, color: used ? C.pink : C.green, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  {used ? "✓ PTO used" : "PTO available"}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
 
       {/* Data cleanup — find & clear misfiled weeks */}
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -2016,9 +2266,10 @@ export default function RefineryApp() {
   const [monthlyScores, setMonthlyScores] = useState({});
   const [companyScores, setCompanyScores] = useState({});
   const [leadershipFb, setLeadershipFb] = useState({ pulse: {}, monthly: {} });
+  const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
-  const [unlocked, setUnlocked] = useState(false);
+  const [unlockedGroups, setUnlockedGroups] = useState({});
   const [pinPromptFor, setPinPromptFor] = useState(null);
 
   useEffect(() => {
@@ -2102,6 +2353,14 @@ export default function RefineryApp() {
       }
       // Missing table → stays empty, no crash.
     }
+    async function loadSettings() {
+      const { data, error } = await supabase.from("app_settings").select("*");
+      if (!error && data) {
+        const s = {};
+        data.forEach(r => { s[r.key] = r.value; });
+        setSettings(s);
+      }
+    }
     loadRoster();
     loadScores();
     loadHolders();
@@ -2110,6 +2369,7 @@ export default function RefineryApp() {
     loadMonthly();
     loadCompany();
     loadLeadership();
+    loadSettings();
   }, []);
 
   useEffect(() => {
@@ -2286,6 +2546,27 @@ export default function RefineryApp() {
   const handleSetLeaderPulse = (weekKey, memberId, patch) => setLeaderRow("pulse", weekKey, memberId, patch);
   const handleSetLeaderMonthly = (monthKey, memberId, patch) => setLeaderRow("monthly", monthKey, memberId, patch);
 
+  useEffect(() => {
+    const channel = supabase.channel("settings-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "app_settings" }, payload => {
+        const r = payload.new || payload.old;
+        if (!r) return;
+        setSettings(prev => {
+          const next = { ...prev };
+          if (payload.eventType === "DELETE") delete next[r.key];
+          else next[r.key] = r.value;
+          return next;
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  const handleSetSetting = async (key, value) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+    await supabase.from("app_settings").upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  };
+
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
       const next = JSON.parse(JSON.stringify(prev));
@@ -2336,16 +2617,20 @@ export default function RefineryApp() {
       await supabase.from("roster").update({ active: updated.active, start_date: updated.start_date }).eq("id", member.id);
       setRoster(prev => prev.map(m => m.id === member.id ? updated : m));
     } else if (action === "update") {
-      await supabase.from("roster").update({ name: member.name, role: member.role, birthday: member.birthday || null, hire_date: member.hire_date || null }).eq("id", member.id);
+      await supabase.from("roster").update({ name: member.name, role: member.role, birthday: member.birthday || null, hire_date: member.hire_date || null, pto_amount: member.pto_amount || null, pto_used_year: member.pto_used_year || null, club_100: member.club_100 || null }).eq("id", member.id);
       setRoster(prev => prev.map(m => m.id === member.id ? member : m));
     }
   };
 
-  const NavBtn = ({ id, label, locked }) => (
-    <button onClick={() => { if (locked && !unlocked) { setPinPromptFor(id); } else { setView(id); } }} style={{ padding: "8px 16px", borderRadius: "8px 8px 0 0", background: view === id ? C.warm : "transparent", color: view === id ? C.ink : "#aaa", border: "none", fontWeight: view === id ? 700 : 500, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
-      {label}{locked && !unlocked && <span style={{ fontSize: 10 }}>🔒</span>}
-    </button>
-  );
+  const NavBtn = ({ id, label }) => {
+    const group = PIN_GROUP[id];
+    const locked = group && !unlockedGroups[group];
+    return (
+      <button onClick={() => { if (locked) { setPinPromptFor({ view: id, group }); } else { setView(id); } }} style={{ padding: "8px 16px", borderRadius: "8px 8px 0 0", background: view === id ? C.warm : "transparent", color: view === id ? C.ink : "#aaa", border: "none", fontWeight: view === id ? 700 : 500, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
+        {label}{locked && <span style={{ fontSize: 10 }}>🔒</span>}
+      </button>
+    );
+  };
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: C.warm, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -2363,30 +2648,30 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v14</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v18</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
-            <NavBtn id="score" label="Score This Week" locked />
+            <NavBtn id="score" label="Score This Week" />
             <NavBtn id="history" label="History & Tracking" />
-            <NavBtn id="coaching" label="Coaching" locked />
-            <NavBtn id="roster" label="Roster" locked />
+            <NavBtn id="coaching" label="Coaching" />
+            <NavBtn id="roster" label="Roster" />
           </div>
         </div>
       </div>
       {pinPromptFor && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPinPromptFor(null)}>
           <div onClick={e => e.stopPropagation()}>
-            <PinLock onUnlock={() => { setUnlocked(true); setView(pinPromptFor); setPinPromptFor(null); }} />
+            <PinLock expectedPin={PIN_FOR[pinPromptFor.group]} label={PIN_LABEL[pinPromptFor.group]} onUnlock={() => { setUnlockedGroups(g => ({ ...g, [pinPromptFor.group]: true })); setView(pinPromptFor.view); setPinPromptFor(null); }} />
           </div>
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={unlocked} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={!!(unlockedGroups.score || unlockedGroups.admin)} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} />}
-        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} />}
+        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} />}
       </div>
     </div>
   );
