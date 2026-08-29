@@ -421,6 +421,42 @@ function getMemberCumulativePts(member, allScores) {
   return Object.values(allScores).reduce((t, ws) => t + (getMemberBonusWeekPts(member, ws) ?? 0), 0);
 }
 function isStylist(member) { return getMemberCards(member).includes("stylist"); }
+// ── Quarter-aware targets & standards (single source of truth, editable in Roster) ──
+function quarterKeyOf(weekKey) { return `${getYear(weekKey)}-Q${getQuarter(weekKey)}`; }
+function currentQuarterKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-Q${Math.ceil((d.getMonth() + 1) / 3)}`;
+}
+function shiftQuarter(qKey, delta) {
+  const [y, q] = qKey.split("-Q").map(Number);
+  const idx = y * 4 + (q - 1) + delta;
+  return `${Math.floor(idx / 4)}-Q${(idx % 4) + 1}`;
+}
+function quarterLabel(qKey) {
+  const [y, q] = qKey.split("-Q");
+  return `Q${q} ${y}`;
+}
+// Fixed shop standards [t1, t2]: score 0 if < t1, 1 if >= t1 and < t2, 2 if >= t2.
+const DEFAULT_STANDARDS = {
+  pph:           [68.44, 71.862],
+  rebooking:     [80, 85],
+  retention:     [75, 85],
+  active_guests: [70, 85],
+};
+// Personal Service/Product targets: quarter-specific Roster value, else legacy code default.
+function getStylistTarget(memberId, qKey, stylistTargets) {
+  const row = (stylistTargets && stylistTargets[qKey] && stylistTargets[qKey][memberId]) || {};
+  const legacy = STYLIST_TARGETS[memberId] || {};
+  return {
+    service: row.service != null ? row.service : (legacy.serviceWeekly != null ? legacy.serviceWeekly : null),
+    product: row.product != null ? row.product : (legacy.productWeekly != null ? legacy.productWeekly : null),
+  };
+}
+function getStandards(qKey, settings) {
+  const raw = settings && settings[`standards:${qKey}`];
+  if (raw) { try { return { ...DEFAULT_STANDARDS, ...JSON.parse(raw) }; } catch (e) { /* fall through */ } }
+  return DEFAULT_STANDARDS;
+}
 function memberYearPts(member, allScores, year) {
   return Object.keys(allScores || {}).filter(wk => getYear(wk) === year)
     .reduce((t, wk) => t + (getMemberBonusWeekPts(member, allScores[wk]) ?? 0), 0);
@@ -1394,7 +1430,7 @@ function RewardsPanel({ member, allScores, roster, poolEstimate }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ background: C.ink, borderRadius: 12, padding: "16px 20px" }}>
-        <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery · Rewards</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery · Incentives</div>
         <div style={{ fontSize: 20, fontWeight: 800, color: C.white }}>{member.name}</div>
         <div style={{ fontSize: 11, color: "#bbb", marginTop: 2 }}>Where you stand this year — {year}</div>
       </div>
@@ -1498,7 +1534,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
           <button onClick={() => { setSel(null); setCard(null); }} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 13, cursor: "pointer", color: C.ink, fontWeight: 600 }}>← Back</button>
           <div style={{ fontSize: 15, fontWeight: 800, color: C.ink }}>{sel.name}</div>
           <div style={{ display: "flex", gap: 2, marginLeft: 4, background: C.warm, borderRadius: 8, padding: 2 }}>
-            {[["score", "Scorecard"], ["rewards", "Rewards"]].map(([mv, ml]) => (
+            {[["score", "Scorecard"], ["rewards", "Incentives"]].map(([mv, ml]) => (
               <button key={mv} onClick={() => setDetailMode(mv)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: detailMode === mv ? C.ink : "transparent", color: detailMode === mv ? C.white : C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{ml}</button>
             ))}
           </div>
@@ -1839,7 +1875,8 @@ function HistoryView({ roster, allScores, holders, monthlyScores }) {
   );
 }
 
-function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, onClearWeek, poolEstimate, onSetPoolEstimate }) {
+function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, onClearWeek, poolEstimate, onSetPoolEstimate, stylistTargets, onSetStylistTarget, settings, onSetSetting }) {
+  const [tq, setTq] = useState(currentQuarterKey());
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: "", role: "stylist" });
   const [editId, setEditId] = useState(null);
@@ -2009,10 +2046,76 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
         </div>
       </div>
 
+      {/* Targets & Standards — per-quarter, the single source of truth for scoring */}
+      {(() => {
+        const stylists = active.filter(isStylist);
+        const stds = getStandards(tq, settings);
+        const setTgt = (mid, field, val) => onSetStylistTarget(tq, mid, { [field]: val === "" ? null : Number(val) });
+        const setStd = (metric, idx, val) => {
+          const cur = { ...getStandards(tq, settings) };
+          const pair = [...(cur[metric] || DEFAULT_STANDARDS[metric])];
+          pair[idx] = val === "" ? DEFAULT_STANDARDS[metric][idx] : Number(val);
+          cur[metric] = pair;
+          onSetSetting(`standards:${tq}`, JSON.stringify(cur));
+        };
+        const stdRows = [["pph", "PPH ($)"], ["rebooking", "Rebooking (%)"], ["retention", "Retention (%)"], ["active_guests", "Active Guests (#)"]];
+        return (
+          <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>🎯 Targets &amp; Standards</div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Service &amp; Product are per stylist and change quarterly. PPH, rebooking, retention &amp; guests are shop-wide standards. The scorecard scores each week against its quarter's numbers.</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={() => setTq(shiftQuarter(tq, -1))} style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 14 }}>◀</button>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.ink, minWidth: 74, textAlign: "center" }}>{quarterLabel(tq)}</div>
+                <button onClick={() => setTq(shiftQuarter(tq, 1))} style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 14 }}>▶</button>
+              </div>
+            </div>
+
+            <div style={{ padding: "10px 20px 4px", fontSize: 10, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Per-stylist weekly targets</div>
+            {stylists.map(m => {
+              const row = (stylistTargets && stylistTargets[tq] && stylistTargets[tq][m.id]) || {};
+              const legacy = STYLIST_TARGETS[m.id] || {};
+              return (
+                <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 90, fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11, color: C.muted }}>Service $</span>
+                    <input type="number" inputMode="decimal" value={row.service != null ? row.service : ""} placeholder={legacy.serviceWeekly != null ? String(legacy.serviceWeekly) : "—"} onChange={e => setTgt(m.id, "service", e.target.value)} style={{ width: 84, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11, color: C.muted }}>Product $</span>
+                    <input type="number" inputMode="decimal" value={row.product != null ? row.product : ""} placeholder={legacy.productWeekly != null ? String(legacy.productWeekly) : "—"} onChange={e => setTgt(m.id, "product", e.target.value)} style={{ width: 72, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                  </div>
+                </div>
+              );
+            })}
+            {stylists.length === 0 && <div style={{ padding: "6px 20px 12px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>No active stylists.</div>}
+
+            <div style={{ padding: "12px 20px 4px", fontSize: 10, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase", borderTop: `1px solid ${C.border}`, marginTop: 6 }}>Shop standards (whole team)</div>
+            {stdRows.map(([metric, label]) => (
+              <div key={metric} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 120, fontSize: 13, fontWeight: 600, color: C.ink }}>{label}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 11, color: C.gold, fontWeight: 700 }}>1 at</span>
+                  <input type="number" inputMode="decimal" value={stds[metric][0]} onChange={e => setStd(metric, 0, e.target.value)} style={{ width: 74, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 11, color: C.green, fontWeight: 700 }}>2 at</span>
+                  <input type="number" inputMode="decimal" value={stds[metric][1]} onChange={e => setStd(metric, 1, e.target.value)} style={{ width: 74, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                </div>
+              </div>
+            ))}
+            <div style={{ padding: "6px 20px 14px", fontSize: 10, color: C.muted, fontStyle: "italic" }}>Score is 0 below the "1 at" number, 1 at or above it, 2 at or above the "2 at" number. Service &amp; Product score on % of target (90% = 1, 100% = 2).</div>
+          </div>
+        );
+      })()}
+
       {/* Rewards & PTO — 100 Club induction + PTO usage per person */}
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
         <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}` }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>🏆 Rewards &amp; Time Off</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>🏆 Incentives &amp; Time Off</div>
           <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>100 Club is your call (induct when someone's met the full standard) · PTO unlocks at 1 year, use it or lose it. Set the PTO $ amount in a member's Edit.</div>
         </div>
         {active.map((m, i) => {
@@ -2267,6 +2370,7 @@ export default function RefineryApp() {
   const [companyScores, setCompanyScores] = useState({});
   const [leadershipFb, setLeadershipFb] = useState({ pulse: {}, monthly: {} });
   const [settings, setSettings] = useState({});
+  const [stylistTargets, setStylistTargets] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlockedGroups, setUnlockedGroups] = useState({});
@@ -2361,6 +2465,17 @@ export default function RefineryApp() {
         setSettings(s);
       }
     }
+    async function loadTargets() {
+      const { data, error } = await supabase.from("stylist_targets").select("*");
+      if (!error && data) {
+        const structured = {};
+        data.forEach(r => {
+          const q = structured[r.quarter_key] = structured[r.quarter_key] || {};
+          q[r.member_id] = { service: r.service != null ? Number(r.service) : null, product: r.product != null ? Number(r.product) : null };
+        });
+        setStylistTargets(structured);
+      }
+    }
     loadRoster();
     loadScores();
     loadHolders();
@@ -2370,6 +2485,7 @@ export default function RefineryApp() {
     loadCompany();
     loadLeadership();
     loadSettings();
+    loadTargets();
   }, []);
 
   useEffect(() => {
@@ -2567,6 +2683,38 @@ export default function RefineryApp() {
     await supabase.from("app_settings").upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
   };
 
+  useEffect(() => {
+    const channel = supabase.channel("targets-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "stylist_targets" }, payload => {
+        const r = payload.new || payload.old;
+        if (!r) return;
+        setStylistTargets(prev => {
+          const next = { ...prev, [r.quarter_key]: { ...(prev[r.quarter_key] || {}) } };
+          if (payload.eventType === "DELETE") delete next[r.quarter_key][r.member_id];
+          else next[r.quarter_key][r.member_id] = { service: r.service != null ? Number(r.service) : null, product: r.product != null ? Number(r.product) : null };
+          return next;
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  const handleSetStylistTarget = async (quarterKey, memberId, patch) => {
+    const existing = stylistTargets?.[quarterKey]?.[memberId] || {};
+    const merged = { ...existing, ...patch };
+    setStylistTargets(prev => {
+      const next = { ...prev, [quarterKey]: { ...(prev[quarterKey] || {}) } };
+      next[quarterKey][memberId] = merged;
+      return next;
+    });
+    await supabase.from("stylist_targets").upsert({
+      quarter_key: quarterKey, member_id: memberId,
+      service: merged.service != null && merged.service !== "" ? merged.service : null,
+      product: merged.product != null && merged.product !== "" ? merged.product : null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "quarter_key,member_id" });
+  };
+
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
       const next = JSON.parse(JSON.stringify(prev));
@@ -2648,7 +2796,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v18</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v19</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -2671,7 +2819,7 @@ export default function RefineryApp() {
         {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} />}
-        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} />}
+        {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} stylistTargets={stylistTargets} onSetStylistTarget={handleSetStylistTarget} settings={settings} onSetSetting={handleSetSetting} />}
       </div>
     </div>
   );
