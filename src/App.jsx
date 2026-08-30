@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = "https://xhqnvaizvczspcwzrpnu.supabase.co";
@@ -655,6 +655,23 @@ function Avatar({ name, size = 38 }) {
   return <div style={{ width: size, height: size, borderRadius: "50%", background: C.goldLight, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: size * 0.34, color: C.gold, flexShrink: 0 }}>{initials}</div>;
 }
 
+// Input/textarea that types locally and only saves (commits) on blur, so
+// per-keystroke DB writes + realtime echoes can't clobber what you're typing.
+function LazyInput({ value, onCommit, as, style, ...rest }) {
+  const [local, setLocal] = useState(value == null ? "" : value);
+  const focused = useRef(false);
+  useEffect(() => { if (!focused.current) setLocal(value == null ? "" : value); }, [value]);
+  const common = {
+    value: local,
+    onChange: e => setLocal(e.target.value),
+    onFocus: () => { focused.current = true; },
+    onBlur: () => { focused.current = false; if (String(local) !== String(value == null ? "" : value)) onCommit(local); },
+    style,
+    ...rest,
+  };
+  return as === "textarea" ? <textarea {...common} /> : <input {...common} />;
+}
+
 function StatusPill({ pts, green, pending }) {
   if (pts === null || pts === undefined) {
     if (pending) return <span style={{ fontSize: 11, fontWeight: 700, color: C.gold, padding: "2px 8px", borderRadius: 20, background: C.goldLight }}>pending</span>;
@@ -758,8 +775,8 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
                 ? <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                       {m.score.unit === "$" && <span style={{ fontSize: 13, color: C.muted }}>$</span>}
-                      <input type="number" inputMode="decimal" value={actualVal != null ? actualVal : ""} placeholder="enter"
-                        onChange={e => { const raw = e.target.value; onEnterActual(m.id, raw, autoScoreMetric(raw, m.score, targets, stdz)); }}
+                      <LazyInput type="number" inputMode="decimal" value={actualVal != null ? actualVal : ""} placeholder="enter"
+                        onCommit={raw => onEnterActual(m.id, raw, autoScoreMetric(raw, m.score, targets, stdz))}
                         style={{ width: 84, padding: "7px 9px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, fontWeight: 700, textAlign: "right" }} />
                       {m.score.unit === "%" && <span style={{ fontSize: 13, color: C.muted }}>%</span>}
                     </div>
@@ -794,7 +811,7 @@ function CompanyNumRow({ label, sub, value, target, green, kind, editable, onCha
         <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>{sub}</div>
       </div>
       {editable ? (
-        <input type="number" inputMode="decimal" value={value ?? ""} onChange={e => onChange(e.target.value)}
+        <LazyInput type="number" inputMode="decimal" value={value ?? ""} onCommit={val => onChange(val)}
           placeholder="—"
           style={{ width: 96, padding: "7px 9px", borderRadius: 8, border: `1.5px solid ${green === null ? C.border : green ? C.green : C.pink}`, fontSize: 14, fontWeight: 700, textAlign: "right", color: C.ink }} />
       ) : (
@@ -1391,7 +1408,7 @@ function LeadershipFeedbackPanel({ member, week, monthKey, pulse, monthly, onSet
             ⚠ A reason is required for a rating under {LEADER_PULSE_TARGET}.{pending != null ? " The rating won't save until you add feedback." : ""}
           </div>
         )}
-        <textarea value={savedFb} onChange={e => onFb(e.target.value)}
+        <LazyInput as="textarea" value={savedFb} onCommit={text => onFb(text)}
           placeholder={needFb ? `Required: what would make this a ${LEADER_PULSE_TARGET}+ next week?` : "Optional: anything on your mind this week…"}
           rows={2}
           style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${needFb ? C.pink : C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
@@ -1418,7 +1435,7 @@ function LeadershipFeedbackPanel({ member, week, monthKey, pulse, monthly, onSet
           {openQs.map(q => (
             <div key={q.id}>
               <div style={{ fontSize: 12, color: C.ink, fontWeight: 600, marginBottom: 6 }}>{q.label}</div>
-              <textarea value={md[q.id] || ""} onChange={e => onSetMonthly(monthKey, member.id, { [q.id]: e.target.value })}
+              <LazyInput as="textarea" value={md[q.id] || ""} onCommit={text => onSetMonthly(monthKey, member.id, { [q.id]: text })}
                 rows={2} placeholder="Your answer (optional)…"
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
             </div>
@@ -1635,9 +1652,9 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
                     ⚠ A reason is required for a rating of 7 or below.{satPending != null ? " The rating won't save until you add feedback." : ""}
                   </div>
                 )}
-                <textarea
+                <LazyInput as="textarea"
                   value={savedFb}
-                  onChange={e => onFeedback(e.target.value)}
+                  onCommit={text => onFeedback(text)}
                   placeholder={needFeedback ? "Required: why 7 or below?" : "Feedback for leaders (optional, private)…"}
                   rows={2}
                   style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${needFeedback ? C.pink : C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
@@ -2084,7 +2101,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
         </div>
         <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Estimated pool $</span>
-          <input type="number" inputMode="decimal" value={poolEstimate} onChange={e => onSetPoolEstimate(e.target.value)} placeholder="e.g. 12000" style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, fontWeight: 700, width: 140 }} />
+          <LazyInput type="number" inputMode="decimal" value={poolEstimate} onCommit={val => onSetPoolEstimate(val)} placeholder="e.g. 12000" style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, fontWeight: 700, width: 140 }} />
           {poolEstimate ? <span style={{ fontSize: 12, color: C.muted }}>= ${Number(poolEstimate).toLocaleString()} to split</span> : null}
         </div>
       </div>
@@ -2125,11 +2142,11 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
                   <div style={{ flex: 1, minWidth: 90, fontSize: 13, fontWeight: 700, color: C.ink }}>{m.name}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontSize: 11, color: C.muted }}>Service $</span>
-                    <input type="number" inputMode="decimal" value={row.service != null ? row.service : ""} placeholder={legacy.serviceWeekly != null ? String(legacy.serviceWeekly) : "—"} onChange={e => setTgt(m.id, "service", e.target.value)} style={{ width: 84, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                    <LazyInput type="number" inputMode="decimal" value={row.service != null ? row.service : ""} placeholder={legacy.serviceWeekly != null ? String(legacy.serviceWeekly) : "—"} onCommit={val => setTgt(m.id, "service", val)} style={{ width: 84, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontSize: 11, color: C.muted }}>Product $</span>
-                    <input type="number" inputMode="decimal" value={row.product != null ? row.product : ""} placeholder={legacy.productWeekly != null ? String(legacy.productWeekly) : "—"} onChange={e => setTgt(m.id, "product", e.target.value)} style={{ width: 72, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                    <LazyInput type="number" inputMode="decimal" value={row.product != null ? row.product : ""} placeholder={legacy.productWeekly != null ? String(legacy.productWeekly) : "—"} onCommit={val => setTgt(m.id, "product", val)} style={{ width: 72, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
                   </div>
                 </div>
               );
@@ -2142,11 +2159,11 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
                 <div style={{ flex: 1, minWidth: 120, fontSize: 13, fontWeight: 600, color: C.ink }}>{label}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ fontSize: 11, color: C.gold, fontWeight: 700 }}>1 at</span>
-                  <input type="number" inputMode="decimal" value={stds[metric][0]} onChange={e => setStd(metric, 0, e.target.value)} style={{ width: 74, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                  <LazyInput type="number" inputMode="decimal" value={stds[metric][0]} onCommit={val => setStd(metric, 0, val)} style={{ width: 74, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ fontSize: 11, color: C.green, fontWeight: 700 }}>2 at</span>
-                  <input type="number" inputMode="decimal" value={stds[metric][1]} onChange={e => setStd(metric, 1, e.target.value)} style={{ width: 74, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                  <LazyInput type="number" inputMode="decimal" value={stds[metric][1]} onCommit={val => setStd(metric, 1, val)} style={{ width: 74, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
                 </div>
               </div>
             ))}
@@ -2385,9 +2402,9 @@ function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, lead
                       ))}
                     </div>
                   )}
-                  <textarea
+                  <LazyInput as="textarea"
                     value={notes?.[week]?.[m.id]?.coaching_note || ""}
-                    onChange={e => onSetNote(week, m.id, { coaching_note: e.target.value })}
+                    onCommit={text => onSetNote(week, m.id, { coaching_note: text })}
                     placeholder="Coaching notes & action plan…"
                     rows={2}
                     style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
@@ -2895,7 +2912,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v20</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v21</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
