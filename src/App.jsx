@@ -655,6 +655,36 @@ function Avatar({ name, size = 38 }) {
   return <div style={{ width: size, height: size, borderRadius: "50%", background: C.goldLight, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: size * 0.34, color: C.gold, flexShrink: 0 }}>{initials}</div>;
 }
 
+// Tiny inline trend line for a metric's recent actuals. up: true=green, false=red, null=flat.
+function Sparkline({ values, up }) {
+  if (!values || values.length < 2) return null;
+  const w = 84, h = 22, pad = 3;
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const pts = values.map((v, i) => {
+    const x = pad + (i / (values.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const color = up == null ? C.muted : up ? C.green : C.pink;
+  const lastX = pad + (w - pad * 2), lastY = h - pad - ((values[values.length - 1] - min) / range) * (h - pad * 2);
+  return (
+    <svg width={w} height={h} style={{ display: "block", flexShrink: 0 }}>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={(pad + (w - pad * 2)).toFixed(1)} cy={lastY.toFixed(1)} r="2.5" fill={color} />
+    </svg>
+  );
+}
+// A metric's entered values across weeks up to a point, oldest→newest, last n.
+function metricHistory(allActuals, memberId, cardType, metricId, uptoWeek, n) {
+  const out = [];
+  Object.keys(allActuals || {}).filter(wk => wk <= uptoWeek).sort().forEach(wk => {
+    const v = allActuals[wk] && allActuals[wk][memberId] && allActuals[wk][memberId][cardType] && allActuals[wk][memberId][cardType][metricId];
+    if (typeof v === "number") out.push(v);
+  });
+  return out.slice(-n);
+}
+
 // Input/textarea that types locally and only saves (commits) on blur, so
 // per-keystroke DB writes + realtime echoes can't clobber what you're typing.
 function LazyInput({ value, onCommit, as, style, ...rest }) {
@@ -691,7 +721,7 @@ function ScoreBtn({ val, label, current, onChange, color }) {
   return <button onClick={() => onChange(val)} style={{ minWidth: 34, height: 34, padding: label ? "0 12px" : 0, borderRadius: 8, border: `2px solid ${active ? c : C.border}`, background: active ? c : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.12s", flexShrink: 0 }}>{label ?? val}</button>;
 }
 
-function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores, onSetMonthly, targets, standards, actuals, onEnterActual }) {
+function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores, onSetMonthly, targets, standards, actuals, onEnterActual, allActuals }) {
   const card = SCORECARDS[cardType];
   const yesNo = !!card.yesNo;
   const per = yesNo ? 1 : 2;
@@ -755,6 +785,15 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
                 ? (tgtForMetric != null ? `Target $${Number(tgtForMetric).toLocaleString()}${actualVal != null && tgtForMetric ? ` · you're at ${Math.round(actualVal / tgtForMetric * 100)}%` : ""}` : "No target set — add it in Roster")
                 : `1 at ${band[0]}${m.score.unit === "%" ? "%" : ""} · 2 at ${band[1]}${m.score.unit === "%" ? "%" : ""}`)
             : null;
+          const hist = numeric ? metricHistory(allActuals, member.id, cardType, m.id, week, 8) : [];
+          let trendUp = null, trendText = null;
+          if (numeric && hist.length >= 2) {
+            const d = hist[hist.length - 1] - hist[hist.length - 2];
+            trendUp = d > 0 ? true : d < 0 ? false : null;
+            const abs = Math.abs(d);
+            const amt = m.score.unit === "$" ? `$${abs.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : m.score.unit === "%" ? `${abs.toFixed(1)}%` : `${abs}`;
+            trendText = `${trendUp === true ? "▲" : trendUp === false ? "▼" : "▬"} ${amt} vs last week`;
+          }
           return (
           <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: i < card.metrics.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -767,6 +806,13 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{m.desc}</div>
               {hint && <div style={{ fontSize: 10, color: C.steel, marginTop: 1, fontWeight: 600 }}>{hint}</div>}
+              {numeric && hist.length >= 2 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  <Sparkline values={hist} up={trendUp} />
+                  <span style={{ fontSize: 11, fontWeight: 800, color: trendUp == null ? C.muted : trendUp ? C.green : C.pink }}>{trendText}</span>
+                </div>
+              )}
+              {numeric && hist.length === 1 && <div style={{ fontSize: 10, color: C.muted, marginTop: 5, fontStyle: "italic" }}>First entry — your trend line starts next week 📈</div>}
               <div style={{ fontSize: 10, color: C.border, marginTop: 1 }}>Source: {m.source}{monthly && monthKey ? ` · applies to all of ${monthLabel(monthKey)}` : ""}</div>
             </div>
             {m.handicap
@@ -1614,6 +1660,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
             standards={getStandards(quarterKeyOf(reviewWeek), settings)}
             actuals={actuals?.[reviewWeek]?.[sel.id]?.[card]}
             onEnterActual={(mid, value, score) => onEnterActual(reviewWeek, sel.id, card, mid, value, score)}
+            allActuals={actuals}
           />
         )}
 
@@ -2912,7 +2959,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v21</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v22</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
