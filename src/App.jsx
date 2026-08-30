@@ -143,12 +143,12 @@ const SCORECARDS = {
   stylist: {
     label: "Stylist",
     metrics: [
-      { id: "service_sales",    label: "Service Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest"   },
-      { id: "product_sales",    label: "Product Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest"   },
-      { id: "pph",              label: "PPH",                                   desc: "Floor target $68.44 · 0 = below · 1 = at floor · 2 = floor +5%", source: "Phorest"   },
-      { id: "rebooking",        label: "Rebooking Rate",                       desc: "0 = <80% · 1 = 80–84% · 2 = 85%+",                           source: "Phorest"   },
-      { id: "retention",        label: "Retention Rate (90-day rolling)",      desc: "0 = <75% · 1 = 75–84% · 2 = 85%+ · Grace period: 90 days",   source: "Phorest",  grace: true },
-      { id: "active_guests",    label: "Active Guest Count",                   desc: "0 = <70 · 1 = 70–84 · 2 = 85+",                              source: "Phorest"   },
+      { id: "service_sales",    label: "Service Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest",  score: { kind: "pct", tgt: "service", unit: "$" } },
+      { id: "product_sales",    label: "Product Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest",  score: { kind: "pct", tgt: "product", unit: "$" } },
+      { id: "pph",              label: "PPH",                                   desc: "Floor target $68.44 · 0 = below · 1 = at floor · 2 = floor +5%", source: "Phorest", score: { kind: "std", std: "pph", unit: "$" } },
+      { id: "rebooking",        label: "Rebooking Rate",                       desc: "0 = <80% · 1 = 80–84% · 2 = 85%+",                           source: "Phorest",  score: { kind: "std", std: "rebooking", unit: "%" } },
+      { id: "retention",        label: "Retention Rate (90-day rolling)",      desc: "0 = <75% · 1 = 75–84% · 2 = 85%+ · Grace period: 90 days",   source: "Phorest",  grace: true, score: { kind: "std", std: "retention", unit: "%" } },
+      { id: "active_guests",    label: "Active Guest Count",                   desc: "0 = <70 · 1 = 70–84 · 2 = 85+",                              source: "Phorest",  score: { kind: "std", std: "active_guests", unit: "#" } },
     ],
   },
   front_desk: {
@@ -457,6 +457,22 @@ function getStandards(qKey, settings) {
   if (raw) { try { return { ...DEFAULT_STANDARDS, ...JSON.parse(raw) }; } catch (e) { /* fall through */ } }
   return DEFAULT_STANDARDS;
 }
+// Convert an entered number to 0/1/2 using the metric's scoring spec.
+function autoScoreMetric(value, spec, targets, standards) {
+  if (value == null || value === "" || Number.isNaN(Number(value))) return null;
+  const v = Number(value);
+  if (spec.kind === "pct") {
+    const t = targets ? targets[spec.tgt] : null;
+    if (t == null || t === 0) return null;
+    const pct = (v / t) * 100;
+    return pct >= 100 ? 2 : pct >= 90 ? 1 : 0;
+  }
+  if (spec.kind === "std") {
+    const band = (standards && standards[spec.std]) || DEFAULT_STANDARDS[spec.std];
+    return v >= band[1] ? 2 : v >= band[0] ? 1 : 0;
+  }
+  return null;
+}
 function memberYearPts(member, allScores, year) {
   return Object.keys(allScores || {}).filter(wk => getYear(wk) === year)
     .reduce((t, wk) => t + (getMemberBonusWeekPts(member, allScores[wk]) ?? 0), 0);
@@ -658,7 +674,7 @@ function ScoreBtn({ val, label, current, onChange, color }) {
   return <button onClick={() => onChange(val)} style={{ minWidth: 34, height: 34, padding: label ? "0 12px" : 0, borderRadius: 8, border: `2px solid ${active ? c : C.border}`, background: active ? c : C.white, color: active ? C.white : C.muted, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.12s", flexShrink: 0 }}>{label ?? val}</button>;
 }
 
-function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores, onSetMonthly }) {
+function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores, onSetMonthly, targets, standards, actuals, onEnterActual }) {
   const card = SCORECARDS[cardType];
   const yesNo = !!card.yesNo;
   const per = yesNo ? 1 : 2;
@@ -678,7 +694,7 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
   const pts = (incompleteWeekly || counted === 0) ? null : sumPts;
   const maxAvail = counted * per;
   const isGreen = pts !== null && pts >= counted; // a 1 on every counted metric
-  const targets = cardType === "stylist" ? STYLIST_TARGETS[member.id] : null;
+  const stdz = standards || DEFAULT_STANDARDS;
   const options = yesNo
     ? [{ v: 0, l: "No", c: C.pink }, { v: 1, l: "Yes", c: C.green }]
     : [{ v: 0, l: null, c: SCORE_COLOR[0] }, { v: 1, l: null, c: SCORE_COLOR[1] }, { v: 2, l: null, c: SCORE_COLOR[2] }];
@@ -698,19 +714,30 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
         </div>
       </div>
 
-      {targets && (
+      {cardType === "stylist" && (
         <div style={{ padding: "10px 20px", background: C.steelLight, borderBottom: `1.5px solid ${C.border}`, fontSize: 11, color: C.steel, display: "flex", gap: 16, flexWrap: "wrap" }}>
-          <span><strong>Weekly Service Target:</strong> ${targets.serviceWeekly.toLocaleString()}</span>
-          <span><strong>Weekly Product Target:</strong> ${targets.productWeekly}</span>
-          <span><strong>PPH Floor:</strong> ${PPH_FLOOR}</span>
+          <span><strong>Service Target:</strong> {targets && targets.service != null ? "$" + targets.service.toLocaleString() : "— set in Roster"}</span>
+          <span><strong>Product Target:</strong> {targets && targets.product != null ? "$" + targets.product : "— set in Roster"}</span>
+          <span><strong>PPH Floor:</strong> ${stdz.pph[0]}</span>
+          <span><strong>Rebook/Retention:</strong> {stdz.rebooking[1]}% / {stdz.retention[1]}%</span>
         </div>
       )}
 
       <div style={{ padding: "0 20px" }}>
         {card.metrics.map((m, i) => {
           const monthly = m.cadence === "monthly";
+          const numeric = !!m.score && cardType === "stylist";
           const curVal = monthly ? monthCard[m.id] : scores?.[m.id];
           const monthlyPending = monthly && curVal === undefined;
+          const actualVal = actuals ? actuals[m.id] : undefined;
+          const derived = numeric ? autoScoreMetric(actualVal, m.score, targets, stdz) : null;
+          const tgtForMetric = numeric && m.score.kind === "pct" ? (targets ? targets[m.score.tgt] : null) : null;
+          const band = numeric && m.score.kind === "std" ? (stdz[m.score.std] || DEFAULT_STANDARDS[m.score.std]) : null;
+          const hint = numeric
+            ? (m.score.kind === "pct"
+                ? (tgtForMetric != null ? `Target $${Number(tgtForMetric).toLocaleString()}${actualVal != null && tgtForMetric ? ` · you're at ${Math.round(actualVal / tgtForMetric * 100)}%` : ""}` : "No target set — add it in Roster")
+                : `1 at ${band[0]}${m.score.unit === "%" ? "%" : ""} · 2 at ${band[1]}${m.score.unit === "%" ? "%" : ""}`)
+            : null;
           return (
           <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: i < card.metrics.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -722,11 +749,23 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
                 {m.grace && <span style={{ fontSize: 10, background: C.steelLight, color: C.steel, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>90-DAY GRACE</span>}
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{m.desc}</div>
+              {hint && <div style={{ fontSize: 10, color: C.steel, marginTop: 1, fontWeight: 600 }}>{hint}</div>}
               <div style={{ fontSize: 10, color: C.border, marginTop: 1 }}>Source: {m.source}{monthly && monthKey ? ` · applies to all of ${monthLabel(monthKey)}` : ""}</div>
             </div>
             {m.handicap
               ? <div style={{ fontSize: 12, color: C.gold, fontWeight: 700, padding: "6px 10px", background: C.goldLight, borderRadius: 8, flexShrink: 0 }}>Auto 2</div>
-              : <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>{options.map(o => <ScoreBtn key={o.v} val={o.v} label={o.l} color={o.c} current={curVal} onChange={v => monthly ? onSetMonthly(monthKey, member.id, cardType, m.id, v) : onScore(m.id, v)} />)}</div>
+              : numeric
+                ? <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      {m.score.unit === "$" && <span style={{ fontSize: 13, color: C.muted }}>$</span>}
+                      <input type="number" inputMode="decimal" value={actualVal != null ? actualVal : ""} placeholder="enter"
+                        onChange={e => { const raw = e.target.value; onEnterActual(m.id, raw, autoScoreMetric(raw, m.score, targets, stdz)); }}
+                        style={{ width: 84, padding: "7px 9px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, fontWeight: 700, textAlign: "right" }} />
+                      {m.score.unit === "%" && <span style={{ fontSize: 13, color: C.muted }}>%</span>}
+                    </div>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15, background: derived == null ? C.warm : SCORE_COLOR[derived], color: derived == null ? C.muted : C.white }} title="auto score">{derived == null ? "—" : derived}</div>
+                  </div>
+                : <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>{options.map(o => <ScoreBtn key={o.v} val={o.v} label={o.l} color={o.c} current={curVal} onChange={v => monthly ? onSetMonthly(monthKey, member.id, cardType, m.id, v) : onScore(m.id, v)} />)}</div>
             }
           </div>
           );
@@ -1488,7 +1527,7 @@ function RewardsPanel({ member, allScores, roster, poolEstimate }) {
   );
 }
 
-function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly, poolEstimate }) {
+function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly, poolEstimate, actuals, onEnterActual, stylistTargets, settings }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const [detailMode, setDetailMode] = useState("score");
@@ -1554,6 +1593,10 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
             week={reviewWeek}
             monthlyScores={monthlyScores}
             onSetMonthly={onSetMonthly}
+            targets={getStylistTarget(sel.id, quarterKeyOf(reviewWeek), stylistTargets)}
+            standards={getStandards(quarterKeyOf(reviewWeek), settings)}
+            actuals={actuals?.[reviewWeek]?.[sel.id]?.[card]}
+            onEnterActual={(mid, value, score) => onEnterActual(reviewWeek, sel.id, card, mid, value, score)}
           />
         )}
 
@@ -2371,6 +2414,7 @@ export default function RefineryApp() {
   const [leadershipFb, setLeadershipFb] = useState({ pulse: {}, monthly: {} });
   const [settings, setSettings] = useState({});
   const [stylistTargets, setStylistTargets] = useState({});
+  const [actuals, setActuals] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlockedGroups, setUnlockedGroups] = useState({});
@@ -2476,6 +2520,19 @@ export default function RefineryApp() {
         setStylistTargets(structured);
       }
     }
+    async function loadActuals() {
+      const { data, error } = await supabase.from("metric_actuals").select("*");
+      if (!error && data) {
+        const s = {};
+        data.forEach(r => {
+          const w = s[r.week_key] = s[r.week_key] || {};
+          const mem = w[r.member_id] = w[r.member_id] || {};
+          const card = mem[r.card_type] = mem[r.card_type] || {};
+          card[r.metric_id] = Number(r.value);
+        });
+        setActuals(s);
+      }
+    }
     loadRoster();
     loadScores();
     loadHolders();
@@ -2486,6 +2543,7 @@ export default function RefineryApp() {
     loadLeadership();
     loadSettings();
     loadTargets();
+    loadActuals();
   }, []);
 
   useEffect(() => {
@@ -2715,6 +2773,47 @@ export default function RefineryApp() {
     }, { onConflict: "quarter_key,member_id" });
   };
 
+  useEffect(() => {
+    const channel = supabase.channel("actuals-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "metric_actuals" }, payload => {
+        const r = payload.new || payload.old;
+        if (!r) return;
+        setActuals(prev => {
+          const next = JSON.parse(JSON.stringify(prev));
+          next[r.week_key] = next[r.week_key] || {};
+          next[r.week_key][r.member_id] = next[r.week_key][r.member_id] || {};
+          next[r.week_key][r.member_id][r.card_type] = next[r.week_key][r.member_id][r.card_type] || {};
+          if (payload.eventType === "DELETE") delete next[r.week_key][r.member_id][r.card_type][r.metric_id];
+          else next[r.week_key][r.member_id][r.card_type][r.metric_id] = Number(r.value);
+          return next;
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  // Stylist enters an actual number → store it AND write the derived 0/1/2 to scores.
+  const handleEnterActual = async (weekKey, memberId, cardType, metricId, value, score) => {
+    const clearing = value == null || value === "";
+    setActuals(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next[weekKey] = next[weekKey] || {};
+      next[weekKey][memberId] = next[weekKey][memberId] || {};
+      next[weekKey][memberId][cardType] = next[weekKey][memberId][cardType] || {};
+      if (clearing) delete next[weekKey][memberId][cardType][metricId];
+      else next[weekKey][memberId][cardType][metricId] = Number(value);
+      return next;
+    });
+    if (clearing) {
+      await supabase.from("metric_actuals").delete().eq("week_key", weekKey).eq("member_id", memberId).eq("card_type", cardType).eq("metric_id", metricId);
+      setAllScores(prev => { const n = JSON.parse(JSON.stringify(prev)); if (n[weekKey] && n[weekKey][memberId] && n[weekKey][memberId][cardType]) delete n[weekKey][memberId][cardType][metricId]; return n; });
+      await supabase.from("scores").delete().eq("week_key", weekKey).eq("member_id", memberId).eq("card_type", cardType).eq("metric_id", metricId);
+      return;
+    }
+    await supabase.from("metric_actuals").upsert({ week_key: weekKey, member_id: memberId, card_type: cardType, metric_id: metricId, value: Number(value), updated_at: new Date().toISOString() }, { onConflict: "week_key,member_id,card_type,metric_id" });
+    if (score != null) await handleScore(weekKey, memberId, cardType, metricId, score);
+  };
+
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
       const next = JSON.parse(JSON.stringify(prev));
@@ -2796,7 +2895,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v19</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v20</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -2816,7 +2915,7 @@ export default function RefineryApp() {
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
         {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={!!(unlockedGroups.score || unlockedGroups.admin)} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} actuals={actuals} onEnterActual={handleEnterActual} stylistTargets={stylistTargets} settings={settings} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} stylistTargets={stylistTargets} onSetStylistTarget={handleSetStylistTarget} settings={settings} onSetSetting={handleSetSetting} />}
