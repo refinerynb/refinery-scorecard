@@ -684,6 +684,26 @@ function metricHistory(allActuals, memberId, cardType, metricId, uptoWeek, n) {
   });
   return out.slice(-n);
 }
+// Count how many of the last n weeks (with data) this stylist metric was below its
+// bar — quarter-aware, so each week uses its own target/standards. Chronic = recurring.
+function metricMissCount(allActuals, member, metric, uptoWeek, stylistTargets, settings, n) {
+  const weeks = Object.keys(allActuals || {}).filter(wk => wk <= uptoWeek).sort().slice(-n);
+  let sample = 0, misses = 0;
+  weeks.forEach(wk => {
+    const v = allActuals[wk] && allActuals[wk][member.id] && allActuals[wk][member.id].stylist && allActuals[wk][member.id].stylist[metric.id];
+    if (typeof v !== "number") return;
+    const q = quarterKeyOf(wk);
+    const stdz = getStandards(q, settings);
+    let ref;
+    if (metric.score.kind === "pct") { const t = getStylistTarget(member.id, q, stylistTargets); ref = t ? t[metric.score.tgt] : null; }
+    else if (metric.score.std === "pph") ref = stdz.pph[0];
+    else ref = stdz[metric.score.std][1];
+    if (ref == null) return;
+    sample++;
+    if (v < ref) misses++;
+  });
+  return { sample, misses };
+}
 
 // Input/textarea that types locally and only saves (commits) on blur, so
 // per-keystroke DB writes + realtime echoes can't clobber what you're typing.
@@ -2296,7 +2316,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
   );
 }
 
-function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, leadershipFb }) {
+function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, leadershipFb, actuals, stylistTargets, settings }) {
   const activeTeam = roster.filter(m => m.active);
   const [week, setWeek] = useState(() => latestScoredWeek(allScores));
   const [open, setOpen] = useState({});
@@ -2317,6 +2337,59 @@ function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, lead
         <div style={{ fontSize: 15, fontWeight: 800, color: C.ink, minWidth: 180, textAlign: "center" }}>{weekRangeLabel(week)}</div>
         <button onClick={() => setWeek(nextWeekKey(week))} disabled={week >= currentWeekKey()} aria-label="Next week" style={{ width: 36, height: 36, borderRadius: 8, border: `1.5px solid ${C.border}`, background: week >= currentWeekKey() ? C.warm : C.white, fontSize: 16, cursor: week >= currentWeekKey() ? "default" : "pointer", color: week >= currentWeekKey() ? C.border : C.ink }}>›</button>
       </div>
+
+      {/* This Week's Coaching Points — numeric misses across the team, misses only */}
+      {(() => {
+        const qKey = quarterKeyOf(week);
+        const stdz = getStandards(qKey, settings);
+        const stylistMetrics = SCORECARDS.stylist.metrics.filter(m => m.score);
+        const rows = [];
+        activeTeam.filter(isStylist).forEach(m => {
+          const tgt = getStylistTarget(m.id, qKey, stylistTargets);
+          const cardActuals = (actuals && actuals[week] && actuals[week][m.id] && actuals[week][m.id].stylist) || {};
+          const points = [];
+          stylistMetrics.forEach(mt => {
+            const actual = cardActuals[mt.id];
+            if (actual == null) return;
+            let ref, label, unit = mt.score.unit;
+            if (mt.score.kind === "pct") { ref = tgt ? tgt[mt.score.tgt] : null; label = "target"; }
+            else if (mt.score.std === "pph") { ref = stdz.pph[0]; label = "floor"; }
+            else { ref = stdz[mt.score.std][1]; label = "goal"; }
+            if (ref == null || actual >= ref) return; // on/above the bar → not a coaching point
+            const gap = ref - actual;
+            const fmt = n => unit === "$" ? `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : unit === "%" ? `${Number(n).toFixed(1)}%` : `${n}`;
+            const hist = metricHistory(actuals, m.id, "stylist", mt.id, week, 2);
+            const trend = hist.length >= 2 ? (hist[1] > hist[0] ? "▲ up" : hist[1] < hist[0] ? "▼ down" : "▬ flat") : "";
+            const mc = metricMissCount(actuals, m, mt, week, stylistTargets, settings, 8);
+            const chronic = mc.sample >= 3 && mc.misses >= 3;
+            points.push({ label: mt.label, text: `${fmt(gap)} under ${label} (${fmt(actual)} vs ${fmt(ref)})`, trend, severe: actual < ref * 0.9, chronic, missCount: mc.misses });
+          });
+          if (points.length) rows.push({ member: m, points });
+        });
+        return (
+          <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "12px 20px", background: C.pinkLight, borderBottom: `1.5px solid ${C.border}` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.pink }}>📋 This Week's Coaching Points</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Everything off-target this week, from the numbers stylists entered. 🟡 close · 🔴 missed · <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 15, height: 15, borderRadius: 8, background: C.pink, color: C.white, fontSize: 8, fontWeight: 900, verticalAlign: "middle" }}>!!</span> recurring.</div>
+            </div>
+            {rows.length === 0
+              ? <div style={{ padding: "14px 20px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>Nothing off-target this week — or numbers not entered yet. 🎉</div>
+              : rows.map((r, i) => (
+                  <div key={r.member.id} style={{ padding: "11px 20px", borderBottom: i < rows.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.ink, marginBottom: 4 }}>{r.member.name}</div>
+                    {r.points.map((p, j) => (
+                      <div key={j} style={{ fontSize: 12, color: C.ink, display: "flex", alignItems: "baseline", gap: 6, marginTop: 2 }}>
+                        {p.chronic
+                          ? <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 15, height: 15, borderRadius: 8, background: C.pink, color: C.white, fontSize: 8, fontWeight: 900, flexShrink: 0, transform: "translateY(2px)" }}>!!</span>
+                          : <span style={{ color: p.severe ? C.pink : C.gold, fontWeight: 800 }}>{p.severe ? "🔴" : "🟡"}</span>}
+                        <span><strong>{p.label}:</strong> {p.text}{p.trend && <span style={{ color: C.muted }}> · {p.trend}</span>}{p.chronic && <span style={{ color: C.pink, fontWeight: 700 }}> · recurring ({p.missCount}× recently)</span>}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+          </div>
+        );
+      })()}
 
       {/* Satisfaction + feedback */}
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -2959,7 +3032,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v22</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v24</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -2981,7 +3054,7 @@ export default function RefineryApp() {
         {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={!!(unlockedGroups.score || unlockedGroups.admin)} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} />}
         {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} actuals={actuals} onEnterActual={handleEnterActual} stylistTargets={stylistTargets} settings={settings} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
-        {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} />}
+        {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} actuals={actuals} stylistTargets={stylistTargets} settings={settings} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} stylistTargets={stylistTargets} onSetStylistTarget={handleSetStylistTarget} settings={settings} onSetSetting={handleSetSetting} />}
       </div>
     </div>
