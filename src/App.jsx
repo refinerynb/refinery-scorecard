@@ -2619,7 +2619,7 @@ function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, lead
   );
 }
 
-export default function RptSection({ title, children }) {
+function RptSection({ title, children }) {
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ fontSize: 12, fontWeight: 800, color: C.gold, textTransform: "uppercase", letterSpacing: 1.5, borderBottom: `2px solid ${C.gold}`, paddingBottom: 4, marginBottom: 10 }}>{title}</div>
