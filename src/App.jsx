@@ -421,6 +421,8 @@ function getMemberCumulativePts(member, allScores) {
   return Object.values(allScores).reduce((t, ws) => t + (getMemberBonusWeekPts(member, ws) ?? 0), 0);
 }
 function isStylist(member) { return getMemberCards(member).includes("stylist"); }
+// In the stylist bonus pool: cuts hair, but NOT the owner or GM (Vicki & Payton).
+function inBonusPool(member) { return isStylist(member) && member.role !== "owner" && member.role !== "gm"; }
 // ── Quarter-aware targets & standards (single source of truth, editable in Roster) ──
 function quarterKeyOf(weekKey) { return `${getYear(weekKey)}-Q${getQuarter(weekKey)}`; }
 function currentQuarterKey() {
@@ -1526,13 +1528,15 @@ function RewardsPanel({ member, allScores, roster, poolEstimate }) {
   const year = String(new Date().getFullYear());
   const q = Math.ceil((new Date().getMonth() + 1) / 3);
   const stylist = isStylist(member);
-  const stylists = roster.filter(m => m.active && isStylist(m));
+  const inPool = inBonusPool(member);
+  const poolMembers = roster.filter(m => m.active && inBonusPool(m));
 
   const myYear = memberYearPts(member, allScores, year);
-  const totalYear = stylists.reduce((t, s) => t + memberYearPts(s, allScores, year), 0);
-  const share = totalYear > 0 ? myYear / totalYear : 0;
+  const totalYear = poolMembers.reduce((t, s) => t + memberYearPts(s, allScores, year), 0);
+  const share = inPool && totalYear > 0 ? myYear / totalYear : 0;
   const est = poolEstimate * share;
 
+  const stylists = roster.filter(m => m.active && isStylist(m));
   const qRanked = stylists.map(s => ({ id: s.id, name: s.name, pts: memberQuarterPts(s, allScores, year, q) })).sort((a, b) => b.pts - a.pts);
   const myRank = qRanked.findIndex(x => x.id === member.id) + 1;
   const myQ = qRanked.find(x => x.id === member.id)?.pts ?? memberQuarterPts(member, allScores, year, q);
@@ -1560,16 +1564,21 @@ function RewardsPanel({ member, allScores, roster, poolEstimate }) {
         <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic", padding: "0 4px" }}>The bonus pool, STRA-tegic Champion and 100 Club are stylist programs. Your Time Off is below.</div>
       )}
 
-      {stylist && (
+      {stylist && inPool && (
         <RewardCard title="Bonus Pool — estimated year-end share" icon="💰" tone="gold">
           {poolEstimate > 0
             ? <>
                 <div style={{ fontSize: 28, fontWeight: 800, color: C.ink }}>{money(est)}</div>
-                <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{Math.round(share * 100)}% of the pool · {myYear} pts of {totalYear} team pts</div>
+                <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{Math.round(share * 100)}% of the pool · {myYear} pts of {totalYear} pool pts</div>
                 <div style={{ height: 8, background: C.border, borderRadius: 4, marginTop: 10, overflow: "hidden" }}><div style={{ width: `${Math.round(share * 100)}%`, height: "100%", background: C.gold }} /></div>
                 <div style={{ fontSize: 10, color: C.muted, marginTop: 8, fontStyle: "italic" }}>Estimate only — the pool is a share of shop net profit and shifts as points and profit change through the year.</div>
               </>
-            : <div style={{ fontSize: 13, color: C.muted }}>Your share is <strong>{Math.round(share * 100)}%</strong> of the pool ({myYear} of {totalYear} team pts). Dollar estimate appears once the pool amount is set.</div>}
+            : <div style={{ fontSize: 13, color: C.muted }}>Your share is <strong>{Math.round(share * 100)}%</strong> of the pool ({myYear} of {totalYear} pool pts). Dollar estimate appears once the pool amount is set.</div>}
+        </RewardCard>
+      )}
+      {stylist && !inPool && (
+        <RewardCard title="Bonus Pool" icon="💰" tone="steel">
+          <div style={{ fontSize: 13, color: C.muted }}>As owner/GM you're not part of the stylist bonus pool — your {myYear} pts this year don't count against the team's shares. You still appear in the STRA-tegic Champion ranking below.</div>
         </RewardCard>
       )}
 
@@ -3039,7 +3048,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v25</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v27</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
