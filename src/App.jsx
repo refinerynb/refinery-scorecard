@@ -245,7 +245,7 @@ const GREEN_MIN = 6;
 const START_DATE = "2026-06-23";
 const SCORE_PIN = "2363";
 const ADMIN_PIN = "2026";
-const PIN_GROUP = { score: "score", coaching: "admin", roster: "admin" };
+const PIN_GROUP = { score: "score", coaching: "admin", roster: "admin", reports: "admin" };
 const PIN_FOR = { score: SCORE_PIN, admin: ADMIN_PIN };
 const PIN_LABEL = { score: "Required to score this week", admin: "Manager access — Coaching & Roster" };
 
@@ -2619,7 +2619,161 @@ function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, lead
   );
 }
 
-export default function RefineryApp() {
+export default function RptSection({ title, children }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: C.gold, textTransform: "uppercase", letterSpacing: 1.5, borderBottom: `2px solid ${C.gold}`, paddingBottom: 4, marginBottom: 10 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function ReportsView({ roster, allScores, monthlyScores, companyScores, actuals, stylistTargets, settings, rocks, notes, poolEstimate }) {
+  const [mode, setMode] = useState("quarter");
+  const [qk, setQk] = useState(currentQuarterKey());
+  const [wk, setWk] = useState(() => latestScoredWeek(allScores));
+  const activeTeam = roster.filter(m => m.active);
+  const stylists = activeTeam.filter(isStylist);
+  const money = n => "$" + Math.round(n).toLocaleString();
+
+  const qYear = qk.slice(0, 4);
+  const qNum = parseInt(qk.slice(qk.indexOf("Q") + 1), 10);
+  const qWeeks = Object.keys(allScores || {}).filter(w => getYear(w) === qYear && getQuarter(w) === qNum).sort();
+
+  // Rocks for the quarter
+  const leaders = activeTeam.filter(isLeader);
+  const rocksAll = Object.values(rocks || {}).filter(r => r.quarter_key === qk);
+  const rocksDone = rocksAll.filter(r => r.status === "complete").length;
+
+  // Company quarterly rollup (sales summed, rates averaged)
+  const stylistCount = stylists.length;
+  const compRollup = COMPANY_METRICS.map(m => {
+    let vals;
+    if (m.auto) vals = qWeeks.map(w => teamSatisfactionAvg(notes, w, activeTeam)).filter(v => v != null);
+    else vals = qWeeks.map(w => companyScores?.[w]?.[m.id]).filter(v => typeof v === "number");
+    if (!vals.length) return { m, value: null, target: null, green: null, n: 0 };
+    const perWeek = m.id === "service_sales" ? (SERVICE_TARGETS[`${qYear}-${String((qNum - 1) * 3 + 1).padStart(2, "0")}`]?.weekly ?? null) : companyTargetWeekly(m.id, `${qYear}-${String((qNum - 1) * 3 + 1).padStart(2, "0")}`, stylistCount);
+    let value, target;
+    if (m.agg === "sum") { value = Math.round(vals.reduce((a, b) => a + b, 0)); target = perWeek != null ? Math.round(perWeek * vals.length) : null; }
+    else { value = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100; target = perWeek; }
+    return { m, value, target, green: companyGreen(m.dir, value, target), n: vals.length };
+  });
+
+  // Per-stylist quarter performance
+  const teamRows = stylists.map(m => {
+    let green = 0, scored = 0;
+    qWeeks.forEach(w => { const p = getMemberBonusWeekPts(m, allScores[w]); if (p !== null) { scored++; if (p >= GREEN_MIN) green++; } });
+    return { m, green, scored, pts: memberQuarterPts(m, allScores, qYear, qNum) };
+  }).sort((a, b) => b.pts - a.pts);
+  const champ = teamRows.filter(r => inBonusPool(r.m) || true)[0];
+
+  const printBtn = <button onClick={() => window.print()} style={{ padding: "8px 16px", borderRadius: 8, background: C.gold, color: C.white, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🖨 Print / Save PDF</button>;
+
+  return (
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: "20px 24px 60px" }}>
+      <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 2, background: C.white, borderRadius: 8, padding: 3, border: `1.5px solid ${C.border}` }}>
+          {[["quarter", "Quarterly"], ["week", "Weekly"]].map(([mv, ml]) => (
+            <button key={mv} onClick={() => setMode(mv)} style={{ padding: "7px 16px", borderRadius: 6, border: "none", background: mode === mv ? C.ink : "transparent", color: mode === mv ? C.white : C.muted, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{ml}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {mode === "quarter"
+            ? <><button onClick={() => setQk(shiftQuarter(qk, -1))} style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer" }}>◀</button><div style={{ fontSize: 13, fontWeight: 800, minWidth: 74, textAlign: "center" }}>{quarterLabel(qk)}</div><button onClick={() => setQk(shiftQuarter(qk, 1))} style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer" }}>▶</button></>
+            : <><button onClick={() => setWk(prevWeekKey(wk))} style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer" }}>◀</button><div style={{ fontSize: 12, fontWeight: 700, minWidth: 90, textAlign: "center" }}>{weekLabelFromKey(wk)}</div><button onClick={() => setWk(nextWeekKey(wk))} style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer" }}>▶</button></>}
+          {printBtn}
+        </div>
+      </div>
+
+      <div className="print-area" style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "28px 32px" }}>
+        <div style={{ borderBottom: `2px solid ${C.ink}`, paddingBottom: 12, marginBottom: 20 }}>
+          <div style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery · STRA-TEGIC</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: C.ink }}>{mode === "quarter" ? `Quarterly Review — ${quarterLabel(qk)}` : `Weekly Report — ${weekLabelFromKey(wk)}`}</div>
+        </div>
+
+        {mode === "quarter" ? (
+          <>
+            <RptSection title={`Rocks — ${rocksDone} of ${rocksAll.length} complete`}>
+              {leaders.map(l => {
+                const rks = rocksAll.filter(r => r.member_id === l.id);
+                if (!rks.length) return null;
+                return (
+                  <div key={l.id} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{l.name}</div>
+                    {rks.map(r => { const s = ROCK_STATUS[r.status] || ROCK_STATUS.not_started; return (
+                      <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginTop: 2 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 4, background: s.color, flexShrink: 0 }} />
+                        <span style={{ flex: 1, color: C.ink }}>{r.title || "(untitled)"}</span>
+                        <span style={{ color: s.color, fontWeight: 700 }}>{s.label}</span>
+                      </div>); })}
+                  </div>
+                );
+              })}
+              {rocksAll.length === 0 && <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic" }}>No rocks set this quarter.</div>}
+            </RptSection>
+
+            <RptSection title="Company Scorecard — quarter">
+              {compRollup.map(r => (
+                <div key={r.m.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "3px 0" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 4, background: r.green === null ? C.border : r.green ? C.green : C.pink, flexShrink: 0 }} />
+                  <span style={{ flex: 1, color: C.ink }}>{r.m.label} <span style={{ color: C.muted }}>({r.n} wk{r.n !== 1 ? "s" : ""}, {r.m.agg === "sum" ? "total" : "avg"})</span></span>
+                  <span style={{ fontWeight: 700, color: r.green === null ? C.muted : r.green ? C.green : C.pink }}>{fmtCompany(r.m.kind, r.value)}</span>
+                  <span style={{ color: C.muted, minWidth: 80, textAlign: "right" }}>/ {fmtCompany(r.m.kind, r.target)}</span>
+                </div>
+              ))}
+            </RptSection>
+
+            <RptSection title="Team — quarter performance">
+              {teamRows.map((r, i) => (
+                <div key={r.m.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "3px 0" }}>
+                  <span style={{ width: 20, color: C.muted, fontWeight: 700 }}>{i === 0 && r.pts > 0 ? "🥇" : `#${i + 1}`}</span>
+                  <span style={{ flex: 1, fontWeight: 700, color: C.ink }}>{r.m.name}</span>
+                  <span style={{ color: C.green, fontWeight: 700 }}>{r.green} green</span>
+                  <span style={{ color: C.muted }}>/ {r.scored} wks</span>
+                  <span style={{ minWidth: 60, textAlign: "right", fontWeight: 700, color: C.ink }}>{r.pts} pts</span>
+                </div>
+              ))}
+              {champ && champ.pts > 0 && <div style={{ fontSize: 12, color: C.gold, fontWeight: 700, marginTop: 8 }}>🏆 STRA-tegic Champion: {champ.m.name} ({champ.pts} pts)</div>}
+            </RptSection>
+          </>
+        ) : (
+          <WeeklyReportBody wk={wk} roster={roster} allScores={allScores} monthlyScores={monthlyScores} companyScores={companyScores} actuals={actuals} stylistTargets={stylistTargets} settings={settings} notes={notes} />
+        )}
+        <div style={{ marginTop: 24, paddingTop: 12, borderTop: `1px solid ${C.border}`, fontSize: 10, color: C.muted }}>Generated from live data · The Refinery STRA-TEGIC Performance System</div>
+      </div>
+    </div>
+  );
+}
+
+function WeeklyReportBody({ wk, roster, allScores, monthlyScores, companyScores, actuals, stylistTargets, settings, notes }) {
+  const activeTeam = roster.filter(m => m.active);
+  const stylists = activeTeam.filter(isStylist);
+  const entries = [];
+  activeTeam.forEach(m => getMemberCards(m).forEach(card => { const s = getCardStatus(card, m.id, wk, allScores, monthlyScores); if (s.pts !== null) entries.push({ name: m.name, card: SCORECARDS[card].label, green: s.green, pts: s.pts }); }));
+  const greenN = entries.filter(e => e.green).length, pinkN = entries.filter(e => !e.green).length;
+  const sat = teamSatisfactionAvg(notes, wk, activeTeam);
+  const cs = companyScores?.[wk] || {};
+  return (
+    <>
+      <RptSection title="Team status">
+        <div style={{ fontSize: 13, color: C.ink }}><strong style={{ color: C.green }}>{greenN} green</strong> · <strong style={{ color: C.pink }}>{pinkN} pink</strong> (per card) · Team satisfaction {sat == null ? "—" : `${sat}/10`}</div>
+      </RptSection>
+      <RptSection title="Company numbers">
+        {COMPANY_METRICS.filter(m => !m.auto).map(m => (
+          <div key={m.id} style={{ fontSize: 12, padding: "2px 0", display: "flex", gap: 8 }}><span style={{ flex: 1, color: C.ink }}>{m.label}</span><span style={{ fontWeight: 700 }}>{typeof cs[m.id] === "number" ? fmtCompany(m.kind, cs[m.id]) : "—"}</span></div>
+        ))}
+      </RptSection>
+      <RptSection title="Pink / coaching">
+        {(() => {
+          const rows = entries.filter(e => !e.green);
+          return rows.length ? rows.map((e, i) => <div key={i} style={{ fontSize: 12, color: C.ink, padding: "2px 0" }}>🔴 {e.name} — {e.card} ({e.pts} pts)</div>) : <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic" }}>Everyone green this week. 🎉</div>;
+        })()}
+      </RptSection>
+    </>
+  );
+}
+
+function RefineryApp() {
   const [roster, setRoster] = useState([]);
   const [allScores, setAllScores] = useState({});
   const [holders, setHolders] = useState({});
@@ -3146,12 +3300,13 @@ export default function RefineryApp() {
 
   return (
     <div style={{ minHeight: "100vh", background: C.warm, fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div style={{ background: C.ink, padding: "18px 24px 0", position: "sticky", top: 0, zIndex: 20 }}>
+      <style>{`@media print { .no-print { display: none !important; } body { background: #fff !important; } .print-area { box-shadow: none !important; border: none !important; } }`}</style>
+      <div className="no-print" style={{ background: C.ink, padding: "18px 24px 0", position: "sticky", top: 0, zIndex: 20 }}>
         <div style={{ maxWidth: 900, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v29</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v30</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -3159,6 +3314,7 @@ export default function RefineryApp() {
             <NavBtn id="history" label="History & Tracking" />
             <NavBtn id="coaching" label="Coaching" />
             <NavBtn id="roster" label="Roster" />
+            <NavBtn id="reports" label="Reports" />
           </div>
         </div>
       </div>
@@ -3175,6 +3331,7 @@ export default function RefineryApp() {
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} actuals={actuals} stylistTargets={stylistTargets} settings={settings} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} stylistTargets={stylistTargets} onSetStylistTarget={handleSetStylistTarget} settings={settings} onSetSetting={handleSetSetting} />}
+        {view === "reports" && <ReportsView roster={roster} allScores={allScores} monthlyScores={monthlyScores} companyScores={companyScores} actuals={actuals} stylistTargets={stylistTargets} settings={settings} rocks={rocks} notes={notes} poolEstimate={parseFloat(settings.pool_estimate) || 0} />}
       </div>
     </div>
   );
