@@ -2773,7 +2773,7 @@ function WeeklyReportBody({ wk, roster, allScores, monthlyScores, companyScores,
   );
 }
 
-function RefineryApp() {
+export default function RefineryApp() {
   const [roster, setRoster] = useState([]);
   const [allScores, setAllScores] = useState({});
   const [holders, setHolders] = useState({});
@@ -3306,7 +3306,7 @@ function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v30</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v31</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
