@@ -869,6 +869,66 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
 }
 
 // ── COMPANY SCORECARD ─────────────────────────────────────────────────────────
+const ROCK_STATUS = {
+  not_started: { label: "Not started", color: C.muted, bg: C.warm },
+  on_track:    { label: "On track", color: C.green, bg: C.greenLight },
+  behind:      { label: "Behind", color: C.pink, bg: C.pinkLight },
+  complete:    { label: "✓ Complete", color: C.gold, bg: C.goldLight },
+};
+const ROCK_ORDER = ["not_started", "on_track", "behind", "complete"];
+
+function RockReview({ quarterKey, roster, rocks, readOnly, onAddRock, onUpdateRock, onDeleteRock }) {
+  const leaders = roster.filter(m => m.active && isLeader(m));
+  const rocksFor = mid => Object.values(rocks || {}).filter(r => r.quarter_key === quarterKey && r.member_id === mid);
+  return (
+    <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "12px 20px", background: C.ink, borderBottom: `1.5px solid ${C.border}` }}>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery · EOS</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.white }}>Rock Review — {quarterLabel(quarterKey)}</div>
+        <div style={{ fontSize: 11, color: "#bbb", marginTop: 2 }}>Quarterly leadership priorities</div>
+      </div>
+      {leaders.length === 0 && <div style={{ padding: "14px 20px", fontSize: 12, color: C.muted, fontStyle: "italic" }}>No leaders on the roster.</div>}
+      {leaders.map((leader, i) => {
+        const rks = rocksFor(leader.id);
+        return (
+          <div key={leader.id} style={{ padding: "12px 20px", borderBottom: i < leaders.length - 1 ? `1px solid ${C.border}` : "none" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.ink, marginBottom: rks.length || !readOnly ? 8 : 0 }}>{leader.name}</div>
+            {rks.length === 0 && readOnly && <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic" }}>No rocks set this quarter.</div>}
+            {rks.map(rock => {
+              const st = ROCK_STATUS[rock.status] || ROCK_STATUS.not_started;
+              if (readOnly) {
+                return (
+                  <div key={rock.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 5, background: st.color, flexShrink: 0, marginTop: 4 }} />
+                    <div style={{ flex: 1, fontSize: 13, color: C.ink }}>{rock.title || <span style={{ color: C.muted, fontStyle: "italic" }}>(untitled rock)</span>}</div>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
+                  </div>
+                );
+              }
+              return (
+                <div key={rock.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                    <LazyInput value={rock.title} onCommit={t => onUpdateRock(rock.id, { title: t })} placeholder="Rock (quarterly priority)…" style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                    <button onClick={() => onDeleteRock(rock.id)} style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", lineHeight: 1, padding: "4px 2px" }} aria-label="Delete rock">×</button>
+                  </div>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+                    {ROCK_ORDER.map(s => {
+                      const cfg = ROCK_STATUS[s];
+                      const on = rock.status === s;
+                      return <button key={s} onClick={() => onUpdateRock(rock.id, { status: s })} style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 20, cursor: "pointer", border: `1.5px solid ${on ? cfg.color : C.border}`, background: on ? cfg.bg : C.white, color: on ? cfg.color : C.muted }}>{cfg.label}</button>;
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {!readOnly && <button onClick={() => onAddRock(quarterKey, leader.id)} style={{ fontSize: 11, fontWeight: 700, color: C.steel, background: "none", border: `1.5px dashed ${C.border}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer" }}>+ Add rock</button>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CompanyNumRow({ label, sub, value, target, green, kind, editable, onChange }) {
   const dot = green === null ? C.border : green ? C.green : C.pink;
   return (
@@ -1224,7 +1284,7 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
   );
 }
 
-function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores, companyScores }) {
+function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores, companyScores, rocks }) {
   const activeTeam = roster.filter(m => m.active);
   const wk = latestScoredWeek(allScores); // consistent with Wins/satisfaction — the last week actually scored
 
@@ -1312,6 +1372,7 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
       </div>
 
       <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} week={latestCompanyWeek(companyScores)} readOnly onSetCompany={() => {}} />
+      <RockReview quarterKey={currentQuarterKey()} roster={roster} rocks={rocks} readOnly />
 
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 12, padding: "16px 20px" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.steel, marginBottom: 8 }}>📋 Book Control Trigger</div>
@@ -1619,7 +1680,7 @@ function RewardsPanel({ member, allScores, roster, poolEstimate }) {
   );
 }
 
-function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly, poolEstimate, actuals, onEnterActual, stylistTargets, settings }) {
+function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly, poolEstimate, actuals, onEnterActual, stylistTargets, settings, rocks, onAddRock, onUpdateRock, onDeleteRock }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const [detailMode, setDetailMode] = useState("score");
@@ -1856,6 +1917,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
 
       <div style={{ height: 4 }} />
       <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} week={reviewWeek} onSetCompany={onSetCompany} />
+      <RockReview quarterKey={quarterKeyOf(reviewWeek)} roster={roster} rocks={rocks} onAddRock={onAddRock} onUpdateRock={onUpdateRock} onDeleteRock={onDeleteRock} />
     </div>
   );
 }
@@ -2569,6 +2631,7 @@ export default function RefineryApp() {
   const [settings, setSettings] = useState({});
   const [stylistTargets, setStylistTargets] = useState({});
   const [actuals, setActuals] = useState({});
+  const [rocks, setRocks] = useState({});
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [unlockedGroups, setUnlockedGroups] = useState({});
@@ -2687,6 +2750,14 @@ export default function RefineryApp() {
         setActuals(s);
       }
     }
+    async function loadRocks() {
+      const { data, error } = await supabase.from("rocks").select("*");
+      if (!error && data) {
+        const s = {};
+        data.forEach(r => { s[r.id] = { id: r.id, quarter_key: r.quarter_key, member_id: r.member_id, title: r.title || "", status: r.status || "not_started" }; });
+        setRocks(s);
+      }
+    }
     loadRoster();
     loadScores();
     loadHolders();
@@ -2698,6 +2769,7 @@ export default function RefineryApp() {
     loadSettings();
     loadTargets();
     loadActuals();
+    loadRocks();
   }, []);
 
   useEffect(() => {
@@ -2968,6 +3040,36 @@ export default function RefineryApp() {
     if (score != null) await handleScore(weekKey, memberId, cardType, metricId, score);
   };
 
+  useEffect(() => {
+    const channel = supabase.channel("rocks-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "rocks" }, payload => {
+        const r = payload.new || payload.old;
+        if (!r) return;
+        setRocks(prev => {
+          const next = { ...prev };
+          if (payload.eventType === "DELETE") delete next[r.id];
+          else next[r.id] = { id: r.id, quarter_key: r.quarter_key, member_id: r.member_id, title: r.title || "", status: r.status || "not_started" };
+          return next;
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  const handleAddRock = async (quarterKey, memberId) => {
+    const rock = { id: uid(), quarter_key: quarterKey, member_id: memberId, title: "", status: "not_started" };
+    setRocks(prev => ({ ...prev, [rock.id]: rock }));
+    await supabase.from("rocks").insert({ ...rock, updated_at: new Date().toISOString() });
+  };
+  const handleUpdateRock = async (id, patch) => {
+    setRocks(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+    await supabase.from("rocks").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+  };
+  const handleDeleteRock = async id => {
+    setRocks(prev => { const next = { ...prev }; delete next[id]; return next; });
+    await supabase.from("rocks").delete().eq("id", id);
+  };
+
   const handleScore = async (weekKey, memberId, cardType, metricId, val) => {
     setAllScores(prev => {
       const next = JSON.parse(JSON.stringify(prev));
@@ -3049,7 +3151,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v28</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v29</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -3068,8 +3170,8 @@ export default function RefineryApp() {
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={!!(unlockedGroups.score || unlockedGroups.admin)} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} actuals={actuals} onEnterActual={handleEnterActual} stylistTargets={stylistTargets} settings={settings} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={!!(unlockedGroups.score || unlockedGroups.admin)} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} rocks={rocks} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} actuals={actuals} onEnterActual={handleEnterActual} stylistTargets={stylistTargets} settings={settings} rocks={rocks} onAddRock={handleAddRock} onUpdateRock={handleUpdateRock} onDeleteRock={handleDeleteRock} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} actuals={actuals} stylistTargets={stylistTargets} settings={settings} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} stylistTargets={stylistTargets} onSetStylistTarget={handleSetStylistTarget} settings={settings} onSetSetting={handleSetSetting} />}
