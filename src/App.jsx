@@ -199,8 +199,8 @@ const SCORECARDS = {
     label: "Vicki",
     metrics: [
       { id: "revenue",          label: "Revenue vs Monthly Target",            desc: "0 = <95% of $58,315 · 1 = 95–99% · 2 = 100%+",               source: "Phorest",   cadence: "monthly" },
-      { id: "profit_margin",    label: "Operating Profit Margin",              desc: "0 = below target · 1 = at target · 2 = above target",         source: "Financial", cadence: "monthly" },
-      { id: "payroll_pct",      label: "Payroll %",                            desc: "0 = above target % · 1 = at target % · 2 = below target %",   source: "Financial", cadence: "monthly" },
+      { id: "profit_margin",    label: "Operating Profit Margin",              desc: "0 = below target · 1 = at target · 2 = above target",         source: "Financial", cadence: "monthly", lag: true },
+      { id: "payroll_pct",      label: "Payroll %",                            desc: "0 = above target % · 1 = at target % · 2 = below target %",   source: "Financial", cadence: "monthly", lag: true },
       { id: "engagement",       label: "Employee Engagement",                  desc: "0 = any involuntary turnover · 1 = zero turnover · 2 = zero + culture activity done", source: "Manual", cadence: "monthly" },
       { id: "culture_initiatives", label: "Culture Initiatives Completed",     desc: "0 = none this month · 1 = 1 completed · 2 = 2+ completed",   source: "Manual",    cadence: "monthly" },
       { id: "leadership_obj",   label: "Leadership Objective Attainment",      desc: "0 = behind · 1 = on track · 2 = ahead + next initiative identified", source: "Manual", cadence: "monthly" },
@@ -827,6 +827,7 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{m.desc}</div>
               {hint && <div style={{ fontSize: 10, color: C.steel, marginTop: 1, fontWeight: 600 }}>{hint}</div>}
+              {m.lag && <div style={{ fontSize: 10, color: C.gold, marginTop: 1, fontWeight: 700 }}>⏳ Available ~2 weeks after month-end — pending is expected, not counted against you</div>}
               {numeric && hist.length >= 2 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
                   <Sparkline values={hist} up={trendUp} />
@@ -3048,7 +3049,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v27</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v28</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
