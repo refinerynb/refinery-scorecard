@@ -695,9 +695,8 @@ function metricMissCount(allActuals, member, metric, uptoWeek, stylistTargets, s
     const q = quarterKeyOf(wk);
     const stdz = getStandards(q, settings);
     let ref;
-    if (metric.score.kind === "pct") { const t = getStylistTarget(member.id, q, stylistTargets); ref = t ? t[metric.score.tgt] : null; }
-    else if (metric.score.std === "pph") ref = stdz.pph[0];
-    else ref = stdz[metric.score.std][1];
+    if (metric.score.kind === "pct") { const t = getStylistTarget(member.id, q, stylistTargets); ref = t && t[metric.score.tgt] != null ? t[metric.score.tgt] * 0.9 : null; }
+    else ref = stdz[metric.score.std][0];
     if (ref == null) return;
     sample++;
     if (v < ref) misses++;
@@ -2351,18 +2350,26 @@ function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, lead
           stylistMetrics.forEach(mt => {
             const actual = cardActuals[mt.id];
             if (actual == null) return;
-            let ref, label, unit = mt.score.unit;
-            if (mt.score.kind === "pct") { ref = tgt ? tgt[mt.score.tgt] : null; label = "target"; }
-            else if (mt.score.std === "pph") { ref = stdz.pph[0]; label = "floor"; }
-            else { ref = stdz[mt.score.std][1]; label = "goal"; }
-            if (ref == null || actual >= ref) return; // on/above the bar → not a coaching point
+            const derived = autoScoreMetric(actual, mt.score, tgt, stdz);
+            if (derived == null || derived === 2) return; // full marks or unscored → not a coaching point
+            const unit = mt.score.unit;
+            // Bar = the next level up they're short of.
+            let ref, label;
+            if (mt.score.kind === "pct") {
+              ref = tgt ? tgt[mt.score.tgt] : null; label = "target";
+            } else {
+              const bnd = stdz[mt.score.std];
+              if (derived === 0) { ref = bnd[0]; label = mt.score.std === "pph" ? "floor" : "the minimum"; }
+              else { ref = bnd[1]; label = mt.score.std === "pph" ? "the +5% goal" : "goal"; }
+            }
+            if (ref == null) return;
             const gap = ref - actual;
             const fmt = n => unit === "$" ? `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : unit === "%" ? `${Number(n).toFixed(1)}%` : `${n}`;
             const hist = metricHistory(actuals, m.id, "stylist", mt.id, week, 2);
             const trend = hist.length >= 2 ? (hist[1] > hist[0] ? "▲ up" : hist[1] < hist[0] ? "▼ down" : "▬ flat") : "";
             const mc = metricMissCount(actuals, m, mt, week, stylistTargets, settings, 8);
-            const chronic = mc.sample >= 3 && mc.misses >= 3;
-            points.push({ label: mt.label, text: `${fmt(gap)} under ${label} (${fmt(actual)} vs ${fmt(ref)})`, trend, severe: actual < ref * 0.9, chronic, missCount: mc.misses });
+            const chronic = derived === 0 && mc.sample >= 3 && mc.misses >= 3;
+            points.push({ label: mt.label, text: `${fmt(gap)} under ${label} (${fmt(actual)} vs ${fmt(ref)})`, trend, severe: derived === 0, chronic, missCount: mc.misses });
           });
           if (points.length) rows.push({ member: m, points });
         });
@@ -3032,7 +3039,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v24</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v25</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
