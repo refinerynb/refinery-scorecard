@@ -1633,7 +1633,7 @@ function RewardsPanel({ member, allScores, roster, poolEstimate }) {
                 <div style={{ fontSize: 28, fontWeight: 800, color: C.ink }}>{money(est)}</div>
                 <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{Math.round(share * 100)}% of the pool · {myYear} pts of {totalYear} pool pts</div>
                 <div style={{ height: 8, background: C.border, borderRadius: 4, marginTop: 10, overflow: "hidden" }}><div style={{ width: `${Math.round(share * 100)}%`, height: "100%", background: C.gold }} /></div>
-                <div style={{ fontSize: 10, color: C.muted, marginTop: 8, fontStyle: "italic" }}>Estimate only — the pool is a share of shop net profit and shifts as points and profit change through the year.</div>
+                <div style={{ fontSize: 10, color: C.muted, marginTop: 8, fontStyle: "italic" }}>Estimate only — your share of the shared bonus pool (≈1% of eligible stylist net sales). It shifts as points and sales change through the year.</div>
               </>
             : <div style={{ fontSize: 13, color: C.muted }}>Your share is <strong>{Math.round(share * 100)}%</strong> of the pool ({myYear} of {totalYear} pool pts). Dollar estimate appears once the pool amount is set.</div>}
         </RewardCard>
@@ -2235,7 +2235,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
         <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}` }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>💰 Bonus Pool Estimate</div>
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Shop-wide $ pool for the year (a share of net profit — update it as you review the P&L). Split by each stylist's cumulative-points share and shown as an estimate on their Rewards tab.</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Shop-wide $ bonus pool for the year (≈1% of eligible stylist net sales). Split by each stylist's cumulative-points share and shown as an estimate on their Incentives tab.</div>
         </div>
         <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Estimated pool $</span>
@@ -3306,7 +3306,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v31</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v32</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
