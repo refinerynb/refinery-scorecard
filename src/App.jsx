@@ -150,8 +150,8 @@ const SCORECARDS = {
       { id: "product_sales",    label: "Product Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest",  score: { kind: "pct", tgt: "product", unit: "$" } },
       { id: "pph",              label: "PPH",                                   desc: "Floor target $68.44 · 0 = below · 1 = at floor · 2 = floor +5%", source: "Phorest", score: { kind: "std", std: "pph", unit: "$" } },
       { id: "future_appts",     label: "Value of Future Appts (next 3 wks)",   desc: "Booked $ in the next 3 weeks · target = 80% of the 3-week service goal", source: "Phorest", since: "2026-09-28", score: { kind: "pct", tgt: "service", mult: 2.4, unit: "$" } },
-      { id: "retention",        label: "Retention Rate (90-day rolling)",      desc: "0 = <75% · 1 = 75–84% · 2 = 85%+ · Grace period: 90 days",   source: "Phorest",  grace: true, score: { kind: "std", std: "retention", unit: "%" } },
-      { id: "active_guests",    label: "Active Guest Count",                   desc: "0 = <70 · 1 = 70–84 · 2 = 85+",                              source: "Phorest",  score: { kind: "std", std: "active_guests", unit: "#" } },
+      { id: "retention",        label: "Retention Rate",                       desc: "0 = <75% · 1 = 75–84% · 2 = 85%+",                            source: "Phorest",  grace: true, score: { kind: "std", std: "retention", unit: "%" } },
+      { id: "active_guests",    label: "Active Guest Count",                   desc: "Counts as a 1 unless a number is entered · then 0 = <70 · 1 = 70–84 · 2 = 85+", source: "Phorest", softDefault: 1, score: { kind: "std", std: "active_guests", unit: "#" } },
     ],
   },
   front_desk: {
@@ -385,13 +385,22 @@ function calcCardPts(cardType, scores, week) {
   const card = SCORECARDS[cardType];
   const s = scores || {};
   const metrics = card.metrics.filter(m => metricActiveForWeek(m, week));
-  const filled = metrics.filter(m => m.handicap || s[m.id] !== undefined).length;
+  const filled = metrics.filter(m => m.handicap || m.softDefault != null || s[m.id] !== undefined).length;
   if (filled < metrics.length) return null;
-  return metrics.reduce((acc, m) => m.handicap ? acc + 2 : acc + (s[m.id] || 0), 0);
+  return metrics.reduce((acc, m) => {
+    if (m.handicap) return acc + 2;
+    if (s[m.id] !== undefined) return acc + (s[m.id] || 0);
+    if (m.softDefault != null) return acc + m.softDefault;
+    return acc;
+  }, 0);
 }
 // A metric with `since` (a week key) only counts from that week on — so adding or
 // swapping a metric never disturbs weeks that were already scored before it existed.
 function metricActiveForWeek(m, week) { return !m.since || !week || week >= m.since; }
+// Retention window: 45-day rolling now, switches to 90-day the week of Dec 1, 2026.
+const RETENTION_90_START = "2026-11-30"; // Monday of the week containing Dec 1
+function retentionWindow(week) { return week && week >= RETENTION_90_START ? 90 : 45; }
+function retentionLabel(week) { return `Retention Rate (${retentionWindow(week)}-day rolling)`; }
 function getMemberWeekPts(member, weekScores) {
   return getMemberCards(member).map(r => calcCardPts(r, weekScores?.[member.id]?.[r]));
 }
@@ -411,7 +420,7 @@ function getCardStatus(cardType, memberId, week, allScores, monthlyScores) {
     if (mt.handicap) { pts += per; counted++; continue; }
     const monthly = mt.cadence === "monthly";
     const v = monthly ? monthS[mt.id] : weekS[mt.id];
-    if (v === undefined) { if (monthly) pending++; else incomplete = true; }
+    if (v === undefined) { if (monthly) pending++; else if (mt.softDefault != null) { pts += mt.softDefault; counted++; } else incomplete = true; }
     else { pts += v; counted++; }
   }
   if (incomplete || counted === 0) return { pts: null, max: counted * per, counted, pending, incomplete };
@@ -766,7 +775,7 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
     if (m.handicap) { sumPts += per; counted++; filled++; return; }
     const monthly = m.cadence === "monthly";
     const v = monthly ? monthCard[m.id] : scores?.[m.id];
-    if (v === undefined) { if (monthly) pending++; else incompleteWeekly = true; }
+    if (v === undefined) { if (monthly) pending++; else if (m.softDefault != null) { sumPts += m.softDefault; counted++; filled++; } else incompleteWeekly = true; }
     else { sumPts += v; counted++; filled++; }
   });
   const pts = (incompleteWeekly || counted === 0) ? null : sumPts;
@@ -808,7 +817,7 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
           const curVal = monthly ? monthCard[m.id] : scores?.[m.id];
           const monthlyPending = monthly && curVal === undefined;
           const actualVal = actuals ? actuals[m.id] : undefined;
-          const derived = numeric ? autoScoreMetric(actualVal, m.score, targets, stdz) : null;
+          const derived = numeric ? (actualVal != null ? autoScoreMetric(actualVal, m.score, targets, stdz) : (m.softDefault ?? null)) : null;
           const tgtForMetric = numeric && m.score.kind === "pct" ? (targets && targets[m.score.tgt] != null ? targets[m.score.tgt] * (m.score.mult || 1) : null) : null;
           const band = numeric && m.score.kind === "std" ? (stdz[m.score.std] || DEFAULT_STANDARDS[m.score.std]) : null;
           const hint = numeric
@@ -829,11 +838,11 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
           <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: i < card.metrics.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: m.handicap ? C.muted : C.ink, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                {m.label}
+                {m.id === "retention" ? retentionLabel(week) : m.label}
                 {m.handicap && <span style={{ fontSize: 10, background: C.goldLight, color: C.gold, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>HANDICAP</span>}
                 {monthly && <span style={{ fontSize: 10, background: C.steelLight, color: C.steel, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>MONTHLY</span>}
                 {monthlyPending && <span style={{ fontSize: 10, background: C.goldLight, color: C.gold, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>PENDING</span>}
-                {m.grace && <span style={{ fontSize: 10, background: C.steelLight, color: C.steel, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>90-DAY GRACE</span>}
+                {m.grace && <span style={{ fontSize: 10, background: C.steelLight, color: C.steel, padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>{retentionWindow(week)}-DAY GRACE</span>}
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{m.desc}</div>
               {hint && <div style={{ fontSize: 10, color: C.steel, marginTop: 1, fontWeight: 600 }}>{hint}</div>}
@@ -2266,7 +2275,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
           cur[metric] = pair;
           onSetSetting(`standards:${tq}`, JSON.stringify(cur));
         };
-        const stdRows = [["pph", "PPH ($)"], ["rebooking", "Rebooking (%)"], ["retention", "Retention (%)"], ["active_guests", "Active Guests (#)"]];
+        const stdRows = [["pph", "PPH ($)"], ["retention", "Retention (%)"], ["active_guests", "Active Guests (#)"]];
         return (
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
             <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -2451,7 +2460,7 @@ function CoachingView({ roster, allScores, notes, onSetNote, monthlyScores, lead
             const trend = hist.length >= 2 ? (hist[1] > hist[0] ? "▲ up" : hist[1] < hist[0] ? "▼ down" : "▬ flat") : "";
             const mc = metricMissCount(actuals, m, mt, week, stylistTargets, settings, 8);
             const chronic = derived === 0 && mc.sample >= 3 && mc.misses >= 3;
-            points.push({ label: mt.label, text: `${fmt(gap)} under ${label} (${fmt(actual)} vs ${fmt(ref)})`, trend, severe: derived === 0, chronic, missCount: mc.misses });
+            points.push({ label: mt.id === "retention" ? retentionLabel(week) : mt.label, text: `${fmt(gap)} under ${label} (${fmt(actual)} vs ${fmt(ref)})`, trend, severe: derived === 0, chronic, missCount: mc.misses });
           });
           if (points.length) rows.push({ member: m, points });
         });
@@ -3316,7 +3325,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v36</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v38</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
