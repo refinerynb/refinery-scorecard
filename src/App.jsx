@@ -55,11 +55,11 @@ const SERVICE_TARGETS = {
 const COMPANY_METRICS = [
   { id: "service_sales",  label: "Service Sales",  kind: "money", dir: "higher", agg: "sum" },
   { id: "product_sales",  label: "Product Sales",  kind: "money", dir: "higher", agg: "sum" },
-  { id: "payroll_pct",    label: "Payroll %",      kind: "pct",   dir: "lower",  agg: "avg" },
   { id: "pph",            label: "PPH",            kind: "money", dir: "higher", agg: "avg" },
-  { id: "utilization",    label: "Utilization %",  kind: "pct",   dir: "higher", agg: "avg" },
+  { id: "utilization",    label: "Utilization %",  kind: "pct",   dir: "higher", agg: "avg", band: [75, 88] },
   { id: "guest_rating",   label: "Guest Rating",   kind: "star",  dir: "higher", agg: "avg" },
   { id: "stylist_rating", label: "Stylist Rating", kind: "ten",   dir: "higher", agg: "avg", auto: true },
+  { id: "future_appts",   label: "Value of Future Appts (3 wk)", kind: "money", dir: "higher", agg: "avg" },
 ];
 function companyTargetWeekly(id, monthKey, stylistCount) {
   switch (id) {
@@ -70,12 +70,15 @@ function companyTargetWeekly(id, monthKey, stylistCount) {
     case "utilization":    return UTILIZATION_TARGET_PCT;
     case "guest_rating":   return GUEST_RATING_TARGET;
     case "stylist_rating": return STYLIST_RATING_TARGET;
+    case "future_appts":   return SERVICE_TARGETS[monthKey]?.weekly != null ? SERVICE_TARGETS[monthKey].weekly * 2.4 : null;
     default:               return null;
   }
 }
-function companyGreen(dir, value, target) {
-  if (value == null || target == null || Number.isNaN(value)) return null;
-  return dir === "lower" ? value < target : value >= target;
+function companyGreen(metric, value, target) {
+  if (value == null || Number.isNaN(value)) return null;
+  if (metric && metric.band) return value >= metric.band[0] && value <= metric.band[1];
+  if (target == null) return null;
+  return metric && metric.dir === "lower" ? value < target : value >= target;
 }
 function fmtCompany(kind, v) {
   if (v == null || Number.isNaN(v)) return "—";
@@ -146,7 +149,7 @@ const SCORECARDS = {
       { id: "service_sales",    label: "Service Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest",  score: { kind: "pct", tgt: "service", unit: "$" } },
       { id: "product_sales",    label: "Product Sales vs Weekly Target",        desc: "0 = <90% of target · 1 = 90–99% · 2 = 100%+",                source: "Phorest",  score: { kind: "pct", tgt: "product", unit: "$" } },
       { id: "pph",              label: "PPH",                                   desc: "Floor target $68.44 · 0 = below · 1 = at floor · 2 = floor +5%", source: "Phorest", score: { kind: "std", std: "pph", unit: "$" } },
-      { id: "rebooking",        label: "Rebooking Rate",                       desc: "0 = <80% · 1 = 80–84% · 2 = 85%+",                           source: "Phorest",  score: { kind: "std", std: "rebooking", unit: "%" } },
+      { id: "future_appts",     label: "Value of Future Appts (next 3 wks)",   desc: "Booked $ in the next 3 weeks · target = 80% of the 3-week service goal", source: "Phorest", since: "2026-09-28", score: { kind: "pct", tgt: "service", mult: 2.4, unit: "$" } },
       { id: "retention",        label: "Retention Rate (90-day rolling)",      desc: "0 = <75% · 1 = 75–84% · 2 = 85%+ · Grace period: 90 days",   source: "Phorest",  grace: true, score: { kind: "std", std: "retention", unit: "%" } },
       { id: "active_guests",    label: "Active Guest Count",                   desc: "0 = <70 · 1 = 70–84 · 2 = 85+",                              source: "Phorest",  score: { kind: "std", std: "active_guests", unit: "#" } },
     ],
@@ -378,13 +381,17 @@ function cardMax(cardType) {
   const c = SCORECARDS[cardType];
   return c.metrics.length * (c.yesNo ? 1 : 2);
 }
-function calcCardPts(cardType, scores) {
+function calcCardPts(cardType, scores, week) {
   const card = SCORECARDS[cardType];
   const s = scores || {};
-  const filled = card.metrics.filter(m => m.handicap || s[m.id] !== undefined).length;
-  if (filled < card.metrics.length) return null;
-  return card.metrics.reduce((acc, m) => m.handicap ? acc + 2 : acc + (s[m.id] || 0), 0);
+  const metrics = card.metrics.filter(m => metricActiveForWeek(m, week));
+  const filled = metrics.filter(m => m.handicap || s[m.id] !== undefined).length;
+  if (filled < metrics.length) return null;
+  return metrics.reduce((acc, m) => m.handicap ? acc + 2 : acc + (s[m.id] || 0), 0);
 }
+// A metric with `since` (a week key) only counts from that week on — so adding or
+// swapping a metric never disturbs weeks that were already scored before it existed.
+function metricActiveForWeek(m, week) { return !m.since || !week || week >= m.since; }
 function getMemberWeekPts(member, weekScores) {
   return getMemberCards(member).map(r => calcCardPts(r, weekScores?.[member.id]?.[r]));
 }
@@ -400,6 +407,7 @@ function getCardStatus(cardType, memberId, week, allScores, monthlyScores) {
   const per = card.yesNo ? 1 : 2;
   let pts = 0, counted = 0, pending = 0, incomplete = false;
   for (const mt of card.metrics) {
+    if (!metricActiveForWeek(mt, week)) continue;
     if (mt.handicap) { pts += per; counted++; continue; }
     const monthly = mt.cadence === "monthly";
     const v = monthly ? monthS[mt.id] : weekS[mt.id];
@@ -413,12 +421,12 @@ function getMemberWeekStatuses(member, week, allScores, monthlyScores) {
   return getMemberCards(member).map(c => getCardStatus(c, member.id, week, allScores, monthlyScores));
 }
 // Bonus-pool math: base card only.
-function getMemberBonusWeekPts(member, weekScores) {
+function getMemberBonusWeekPts(member, weekScores, week) {
   const card = getBonusCard(member);
-  return calcCardPts(card, weekScores?.[member.id]?.[card]);
+  return calcCardPts(card, weekScores?.[member.id]?.[card], week);
 }
 function getMemberCumulativePts(member, allScores) {
-  return Object.values(allScores).reduce((t, ws) => t + (getMemberBonusWeekPts(member, ws) ?? 0), 0);
+  return Object.entries(allScores || {}).reduce((t, [wk, ws]) => t + (getMemberBonusWeekPts(member, ws, wk) ?? 0), 0);
 }
 function isStylist(member) { return getMemberCards(member).includes("stylist"); }
 // In the stylist bonus pool: cuts hair, but NOT the owner or GM (Vicki & Payton).
@@ -464,8 +472,9 @@ function autoScoreMetric(value, spec, targets, standards) {
   if (value == null || value === "" || Number.isNaN(Number(value))) return null;
   const v = Number(value);
   if (spec.kind === "pct") {
-    const t = targets ? targets[spec.tgt] : null;
-    if (t == null || t === 0) return null;
+    const base = targets ? targets[spec.tgt] : null;
+    if (base == null || base === 0) return null;
+    const t = base * (spec.mult || 1);
     const pct = (v / t) * 100;
     return pct >= 100 ? 2 : pct >= 90 ? 1 : 0;
   }
@@ -477,16 +486,16 @@ function autoScoreMetric(value, spec, targets, standards) {
 }
 function memberYearPts(member, allScores, year) {
   return Object.keys(allScores || {}).filter(wk => getYear(wk) === year)
-    .reduce((t, wk) => t + (getMemberBonusWeekPts(member, allScores[wk]) ?? 0), 0);
+    .reduce((t, wk) => t + (getMemberBonusWeekPts(member, allScores[wk], wk) ?? 0), 0);
 }
 function memberQuarterPts(member, allScores, year, q) {
   return Object.keys(allScores || {}).filter(wk => getYear(wk) === year && getQuarter(wk) === q)
-    .reduce((t, wk) => t + (getMemberBonusWeekPts(member, allScores[wk]) ?? 0), 0);
+    .reduce((t, wk) => t + (getMemberBonusWeekPts(member, allScores[wk], wk) ?? 0), 0);
 }
 function memberYearGreen(member, allScores, year) {
   let green = 0, scored = 0;
   Object.keys(allScores || {}).filter(wk => getYear(wk) === year).forEach(wk => {
-    const p = getMemberBonusWeekPts(member, allScores[wk]);
+    const p = getMemberBonusWeekPts(member, allScores[wk], wk);
     if (p !== null) { scored++; if (p >= GREEN_MIN) green++; }
   });
   return { green, scored };
@@ -531,7 +540,7 @@ function latestCompanyWeek(companyScores) {
 function greenStreak(member, allScores, endWeek) {
   let streak = 0, k = endWeek;
   for (let guard = 0; guard < 260; guard++) {
-    const pts = getMemberBonusWeekPts(member, allScores?.[k] || {});
+    const pts = getMemberBonusWeekPts(member, allScores?.[k] || {}, k);
     if (pts !== null && pts >= GREEN_MIN) { streak++; k = prevWeekKey(k); }
     else break;
   }
@@ -550,8 +559,8 @@ function salesWin(member, weekScores) {
 }
 // True comeback: pink on the base card last week, green this week.
 function pinkToGreen(member, allScores, endWeek) {
-  const now = getMemberBonusWeekPts(member, allScores?.[endWeek] || {});
-  const then = getMemberBonusWeekPts(member, allScores?.[prevWeekKey(endWeek)] || {});
+  const now = getMemberBonusWeekPts(member, allScores?.[endWeek] || {}, endWeek);
+  const then = getMemberBonusWeekPts(member, allScores?.[prevWeekKey(endWeek)] || {}, prevWeekKey(endWeek));
   return then !== null && then < GREEN_MIN && now !== null && now >= GREEN_MIN;
 }
 function detectAchievements(activeTeam, allScores, week) {
@@ -753,6 +762,7 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
   // Local monthly-aware status (weekly from this week, monthly from this month).
   let sumPts = 0, counted = 0, pending = 0, incompleteWeekly = false, filled = 0;
   card.metrics.forEach(m => {
+    if (!metricActiveForWeek(m, week)) return;
     if (m.handicap) { sumPts += per; counted++; filled++; return; }
     const monthly = m.cadence === "monthly";
     const v = monthly ? monthCard[m.id] : scores?.[m.id];
@@ -792,14 +802,14 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
       )}
 
       <div style={{ padding: "0 20px" }}>
-        {card.metrics.map((m, i) => {
+        {card.metrics.filter(m => metricActiveForWeek(m, week)).map((m, i) => {
           const monthly = m.cadence === "monthly";
           const numeric = !!m.score && cardType === "stylist";
           const curVal = monthly ? monthCard[m.id] : scores?.[m.id];
           const monthlyPending = monthly && curVal === undefined;
           const actualVal = actuals ? actuals[m.id] : undefined;
           const derived = numeric ? autoScoreMetric(actualVal, m.score, targets, stdz) : null;
-          const tgtForMetric = numeric && m.score.kind === "pct" ? (targets ? targets[m.score.tgt] : null) : null;
+          const tgtForMetric = numeric && m.score.kind === "pct" ? (targets && targets[m.score.tgt] != null ? targets[m.score.tgt] * (m.score.mult || 1) : null) : null;
           const band = numeric && m.score.kind === "std" ? (stdz[m.score.std] || DEFAULT_STANDARDS[m.score.std]) : null;
           const hint = numeric
             ? (m.score.kind === "pct"
@@ -960,7 +970,7 @@ function CompanyScorecardSection({ roster, notes, companyScores, week, onSetComp
   const rows = COMPANY_METRICS.map(m => {
     const value = m.auto ? autoRating : (typeof wk[m.id] === "number" ? wk[m.id] : null);
     const target = companyTargetWeekly(m.id, mk, stylistCount);
-    return { m, value, target, green: companyGreen(m.dir, value, target) };
+    return { m, value, target, green: companyGreen(m, value, target) };
   });
   const greenCount = rows.filter(r => r.green === true).length;
   const scoredCount = rows.filter(r => r.value != null).length;
@@ -980,7 +990,7 @@ function CompanyScorecardSection({ roster, notes, companyScores, week, onSetComp
     let value, target;
     if (m.agg === "sum") { value = Math.round(vals.reduce((a, b) => a + b, 0) * 100) / 100; target = perWeek != null ? Math.round(perWeek * vals.length * 100) / 100 : null; }
     else { value = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100; target = perWeek; }
-    return { m, value, target, green: companyGreen(m.dir, value, target), n: vals.length };
+    return { m, value, target, green: companyGreen(m, value, target), n: vals.length };
   });
   const monthTotal = SERVICE_TARGETS[mk]?.monthly ?? null;
 
@@ -1977,8 +1987,8 @@ function HistoryView({ roster, allScores, holders, monthlyScores }) {
           {qKeys.map(qk => {
             const weeks = qGroups[qk];
             const ranked = [...activeTeam].map(m => {
-              const total = weeks.reduce((acc, wk) => acc + (getMemberBonusWeekPts(m, allScores?.[wk] || {}) ?? 0), 0);
-              const ws = weeks.filter(wk => getMemberBonusWeekPts(m, allScores?.[wk] || {}) !== null).length;
+              const total = weeks.reduce((acc, wk) => acc + (getMemberBonusWeekPts(m, allScores?.[wk] || {}, wk) ?? 0), 0);
+              const ws = weeks.filter(wk => getMemberBonusWeekPts(m, allScores?.[wk] || {}, wk) !== null).length;
               return { member: m, total, ws };
             }).sort((a, b) => b.total - a.total);
             return (
@@ -2014,7 +2024,7 @@ function HistoryView({ roster, allScores, holders, monthlyScores }) {
           </div>
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
             {[...activeTeam]
-              .map(m => ({ m, total: getMemberCumulativePts(m, allScores), weeks: Object.keys(allScores).filter(wk => getMemberBonusWeekPts(m, allScores[wk]) !== null).length }))
+              .map(m => ({ m, total: getMemberCumulativePts(m, allScores), weeks: Object.keys(allScores).filter(wk => getMemberBonusWeekPts(m, allScores[wk], wk) !== null).length }))
               .sort((a, b) => b.total - a.total)
               .map(({ m, total, weeks }, i, arr) => {
                 const maxPts = arr[0]?.total || 1;
@@ -2656,13 +2666,13 @@ function ReportsView({ roster, allScores, monthlyScores, companyScores, actuals,
     let value, target;
     if (m.agg === "sum") { value = Math.round(vals.reduce((a, b) => a + b, 0)); target = perWeek != null ? Math.round(perWeek * vals.length) : null; }
     else { value = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100; target = perWeek; }
-    return { m, value, target, green: companyGreen(m.dir, value, target), n: vals.length };
+    return { m, value, target, green: companyGreen(m, value, target), n: vals.length };
   });
 
   // Per-stylist quarter performance
   const teamRows = stylists.map(m => {
     let green = 0, scored = 0;
-    qWeeks.forEach(w => { const p = getMemberBonusWeekPts(m, allScores[w]); if (p !== null) { scored++; if (p >= GREEN_MIN) green++; } });
+    qWeeks.forEach(w => { const p = getMemberBonusWeekPts(m, allScores[w], w); if (p !== null) { scored++; if (p >= GREEN_MIN) green++; } });
     return { m, green, scored, pts: memberQuarterPts(m, allScores, qYear, qNum) };
   }).sort((a, b) => b.pts - a.pts);
   const champ = teamRows.filter(r => inBonusPool(r.m) || true)[0];
@@ -3306,7 +3316,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v32</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v36</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
