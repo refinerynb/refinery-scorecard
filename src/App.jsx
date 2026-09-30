@@ -151,7 +151,7 @@ const SCORECARDS = {
       { id: "pph",              label: "PPH",                                   desc: "Floor target $68.44 · 0 = below · 1 = at floor · 2 = floor +5%", source: "Phorest", score: { kind: "std", std: "pph", unit: "$" } },
       { id: "future_appts",     label: "Value of Future Appts (next 3 wks)",   desc: "Booked $ in the next 3 weeks · target = 80% of the 3-week service goal", source: "Phorest", since: "2026-09-28", score: { kind: "pct", tgt: "service", mult: 2.4, unit: "$" } },
       { id: "retention",        label: "Retention Rate",                       desc: "0 = <75% · 1 = 75–84% · 2 = 85%+",                            source: "Phorest",  grace: true, score: { kind: "std", std: "retention", unit: "%" } },
-      { id: "active_guests",    label: "Active Guest Count",                   desc: "Counts as a 1 unless a number is entered · then 0 = <70 · 1 = 70–84 · 2 = 85+", source: "Phorest", softDefault: 1, score: { kind: "std", std: "active_guests", unit: "#" } },
+      { id: "active_guests",    label: "Active Guest Count",                   desc: "Counts as a 1 unless a number is entered · then scored vs the stylist's guest goal (90% = 1, 100% = 2)", source: "Phorest", softDefault: 1, score: { kind: "pct", tgt: "guests", unit: "#" } },
     ],
   },
   front_desk: {
@@ -469,6 +469,7 @@ function getStylistTarget(memberId, qKey, stylistTargets) {
   return {
     service: row.service != null ? row.service : (legacy.serviceWeekly != null ? legacy.serviceWeekly : null),
     product: row.product != null ? row.product : (legacy.productWeekly != null ? legacy.productWeekly : null),
+    guests: row.guests != null ? row.guests : null,
   };
 }
 function getStandards(qKey, settings) {
@@ -2275,13 +2276,13 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
           cur[metric] = pair;
           onSetSetting(`standards:${tq}`, JSON.stringify(cur));
         };
-        const stdRows = [["pph", "PPH ($)"], ["retention", "Retention (%)"], ["active_guests", "Active Guests (#)"]];
+        const stdRows = [["pph", "PPH ($)"], ["retention", "Retention (%)"]];
         return (
           <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
             <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>🎯 Targets &amp; Standards</div>
-                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Service &amp; Product are per stylist and change quarterly. PPH, rebooking, retention &amp; guests are shop-wide standards. The scorecard scores each week against its quarter's numbers.</div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Service, Product &amp; Guests are per stylist and change quarterly. PPH &amp; Retention are shop-wide standards. The scorecard scores each week against its quarter's numbers.</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button onClick={() => setTq(shiftQuarter(tq, -1))} style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 14 }}>◀</button>
@@ -2304,6 +2305,10 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontSize: 11, color: C.muted }}>Product $</span>
                     <LazyInput type="number" inputMode="decimal" value={row.product != null ? row.product : ""} placeholder={legacy.productWeekly != null ? String(legacy.productWeekly) : "—"} onCommit={val => setTgt(m.id, "product", val)} style={{ width: 72, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11, color: C.muted }}>Guests #</span>
+                    <LazyInput type="number" inputMode="decimal" value={row.guests != null ? row.guests : ""} placeholder="—" onCommit={val => setTgt(m.id, "guests", val)} style={{ width: 64, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
                   </div>
                 </div>
               );
@@ -2905,7 +2910,7 @@ export default function RefineryApp() {
         const structured = {};
         data.forEach(r => {
           const q = structured[r.quarter_key] = structured[r.quarter_key] || {};
-          q[r.member_id] = { service: r.service != null ? Number(r.service) : null, product: r.product != null ? Number(r.product) : null };
+          q[r.member_id] = { service: r.service != null ? Number(r.service) : null, product: r.product != null ? Number(r.product) : null, guests: r.guests != null ? Number(r.guests) : null };
         });
         setStylistTargets(structured);
       }
@@ -3148,7 +3153,7 @@ export default function RefineryApp() {
         setStylistTargets(prev => {
           const next = { ...prev, [r.quarter_key]: { ...(prev[r.quarter_key] || {}) } };
           if (payload.eventType === "DELETE") delete next[r.quarter_key][r.member_id];
-          else next[r.quarter_key][r.member_id] = { service: r.service != null ? Number(r.service) : null, product: r.product != null ? Number(r.product) : null };
+          else next[r.quarter_key][r.member_id] = { service: r.service != null ? Number(r.service) : null, product: r.product != null ? Number(r.product) : null, guests: r.guests != null ? Number(r.guests) : null };
           return next;
         });
       })
@@ -3168,6 +3173,7 @@ export default function RefineryApp() {
       quarter_key: quarterKey, member_id: memberId,
       service: merged.service != null && merged.service !== "" ? merged.service : null,
       product: merged.product != null && merged.product !== "" ? merged.product : null,
+      guests: merged.guests != null && merged.guests !== "" ? merged.guests : null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "quarter_key,member_id" });
   };
@@ -3325,7 +3331,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v38</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v39</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
