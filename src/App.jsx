@@ -1047,7 +1047,7 @@ function CompanyScorecardSection({ roster, notes, companyScores, week, onSetComp
             ? `Auto from scores · this wk ${r.pinkThis == null ? "—" : r.pinkThis} vs last wk ${r.pinkLast} · fewer or zero = on target`
             : r.m.auto
               ? `Auto from team satisfaction · target ${STYLIST_RATING_TARGET}+/10`
-              : `Target ${r.target == null ? "—" : fmtCompany(r.m.kind, r.target)}${r.m.dir === "lower" ? " or below" : "+"}`}
+              : `Target ${r.target == null ? "—" : fmtCompany(r.m.kind, r.target)}${r.m.dir === "lower" ? " or below" : "+"}${(r.value != null && r.target) ? ` · at ${Math.round((r.value / r.target) * 100)}% of goal${r.value < r.target ? ` · ${fmtCompany(r.m.kind, Math.round((r.target - r.value) * 100) / 100)} to go` : ""}` : ""}`}
           value={r.value}
           target={r.target}
           green={r.green}
@@ -3370,7 +3370,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v44</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v45</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
