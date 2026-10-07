@@ -190,18 +190,18 @@ const SCORECARDS = {
   manager: {
     label: "Manager",
     metrics: [
-      { id: "open_issues",      label: "Open Issues",                          desc: "0 = untouched/rolled over · 1 = resolved or in progress · 2 = resolved + system created to prevent recurrence", source: "Manual", since: "2026-10-05" },
+      { id: "open_issues",      label: "Open Issues",                          desc: "0 = untouched/rolled over · 1 = resolved or in progress · 2 = resolved + system created to prevent recurrence", source: "Manual", since: "2026-09-28" },
       { id: "infractions",      label: "Infraction Rate",                      desc: "0 = any infractions · 1 = zero · 2 = zero + proactive reinforcement documented", source: "Manual" },
       { id: "stock",            label: "Stocking",                             desc: "0 = missed or not placed · 1 = on time · 2 = early + variance flagged", source: "Manual" },
       { id: "team_checkins",    label: "Team Check-In Completion",             desc: "0 = <100% · 1 = 100% · 2 = 100% + dev note per member",       source: "Manual"    },
-      { id: "pink_delegation",  label: "Pink Team Delegation",                 desc: "0 = pink items not delegated/owned · 1 = delegated with a clear owner · 2 = delegated + followed through to resolution", source: "Manual", since: "2026-10-05" },
+      { id: "pink_delegation",  label: "Pink Team Delegation",                 desc: "0 = pink items not delegated/owned · 1 = delegated with a clear owner · 2 = delegated + followed through to resolution", source: "Manual", since: "2026-09-28" },
     ],
   },
   gm: {
     label: "Payton",
     metrics: [
       { id: "hiring",           label: "Hiring Pipeline",                      desc: "0 = 0 interviews/mo · 1 = 1/mo · 2 = 2+/mo",                 source: "Manual",    cadence: "monthly" },
-      { id: "feedback_fulfilled", label: "Feedback Fulfilled",                 desc: "0 = leadership feedback not completed · 1 = completed on time · 2 = completed + acted on", source: "Manual", cadence: "monthly", since: "2026-10-05" },
+      { id: "feedback_fulfilled", label: "Feedback Fulfilled",                 desc: "0 = leadership feedback not completed · 1 = completed on time · 2 = completed + acted on", source: "Manual", cadence: "monthly", since: "2026-09-28" },
       { id: "coaching_outcomes",label: "Coaching Outcomes",                    desc: "0 = coached but no change or got worse · 1 = measurable improvement but still pink · 2 = moved to green", source: "Scorecard", cadence: "monthly" },
     ],
   },
@@ -211,7 +211,7 @@ const SCORECARDS = {
       { id: "profit_margin",    label: "Operating Profit Margin",              desc: "0 = below target · 1 = at target · 2 = above target",         source: "Financial", cadence: "monthly", lag: true },
       { id: "coaching_outcomes",label: "Coaching Outcomes",                    desc: "0 = coached but no change or got worse · 1 = measurable improvement but still pink · 2 = moved to green", source: "Scorecard", cadence: "monthly" },
       { id: "culture_initiatives", label: "Culture Initiatives Completed",     desc: "0 = none this month · 1 = 1 completed · 2 = 2+ completed",   source: "Manual",    cadence: "monthly" },
-      { id: "employee_success", label: "Employee Success (turnover + rating)", desc: "0 = involuntary turnover or rating decline · 1 = zero turnover, rating steady · 2 = zero turnover + rating improved", source: "Manual", cadence: "monthly", since: "2026-10-05" },
+      { id: "employee_success", label: "Employee Success (turnover + rating)", desc: "0 = involuntary turnover or rating decline · 1 = zero turnover, rating steady · 2 = zero turnover + rating improved", source: "Manual", cadence: "monthly", since: "2026-09-28" },
       { id: "leadership_obj",   label: "Leadership Objective Attainment",      desc: "0 = behind · 1 = on track · 2 = ahead + next initiative identified", source: "Manual", cadence: "monthly" },
     ],
   },
@@ -804,7 +804,7 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
           {card.award
             ? <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: C.goldLight, color: C.gold }}>{pts ?? "—"}/{cardMax(cardType)} this week</span>
             : <StatusPill pts={pts} green={isGreen} pending={pending} />}
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{filled}/{card.metrics.length} scored{pending ? ` · ${pending} monthly pending` : ""} · {pts ?? "—"}/{maxAvail} pts</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{filled}/{card.metrics.filter(m => metricActiveForWeek(m, week)).length} scored{pending ? ` · ${pending} monthly pending` : ""} · {pts ?? "—"}/{maxAvail} pts</div>
         </div>
       </div>
 
@@ -3370,7 +3370,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v43</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v44</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
