@@ -9,6 +9,7 @@ const C = {
   ink: "#1C1C1C", warm: "#F6F2EC", gold: "#B8966E", goldLight: "#EDE0CE",
   pink: "#D94F4F", pinkLight: "#FDEAEA", green: "#3A7D5A", greenLight: "#E6F4ED",
   steel: "#4A6FA5", steelLight: "#E8EEF7", border: "#E2DBD0", muted: "#9A9189", white: "#FFFFFF",
+  bg: "#15181E", onBg: "#C9CDD4", // dark page background + readable text directly on it (cards stay light)
 };
 
 const ROLE_OPTIONS = [
@@ -272,7 +273,7 @@ function PinLock({ expectedPin, label, onUnlock }) {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: C.warm, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 }}>
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 }}>
       <div style={{ background: C.white, borderRadius: 16, border: `1.5px solid ${C.border}`, padding: "32px 28px", maxWidth: 320, width: "100%", textAlign: "center" }}>
         <div style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>The Refinery</div>
         <div style={{ fontSize: 18, fontWeight: 800, color: C.ink, marginBottom: 4 }}>Enter PIN to Continue</div>
@@ -1369,7 +1370,7 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
         ))}
       </div>
 
-      <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)} · dual-role members are listed once per card</div>
+      <div style={{ fontSize: 12, color: C.onBg, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)} · dual-role members are listed once per card</div>
       <RecognitionSection roster={roster} allScores={allScores} shoutouts={shoutouts || []} onAdd={onAddShoutout} onDelete={onDeleteShoutout} unlocked={unlocked} />
       <CelebrationsCard roster={roster} />
 
@@ -1394,10 +1395,10 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
         );
       })()}
 
-      <div style={{ fontSize: 11, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Team</div>
+      <div style={{ fontSize: 11, letterSpacing: 1, color: C.onBg, fontWeight: 700, textTransform: "uppercase" }}>Team</div>
       <TeamStatusList title="Green Team" icon="🟢" entries={teamGreen} color={C.green} bg={C.greenLight} />
       <TeamStatusList title="Pink Team" icon="🔴" entries={teamPink} color={C.pink} bg={C.pinkLight} />
-      <div style={{ fontSize: 11, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase", marginTop: 4 }}>Leadership</div>
+      <div style={{ fontSize: 11, letterSpacing: 1, color: C.onBg, fontWeight: 700, textTransform: "uppercase", marginTop: 4 }}>Leadership</div>
       <TeamStatusList title="Green — Leadership" icon="🟢" entries={leadGreen} color={C.green} bg={C.greenLight} />
       <TeamStatusList title="Pink — Leadership" icon="🔴" entries={leadPink} color={C.pink} bg={C.pinkLight} />
 
@@ -3353,23 +3354,23 @@ export default function RefineryApp() {
   };
 
   if (loading) return (
-    <div style={{ minHeight: "100vh", background: C.warm, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div style={{ textAlign: "center" }}>
         <div style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>The Refinery</div>
-        <div style={{ fontSize: 16, color: C.muted }}>Loading performance data...</div>
+        <div style={{ fontSize: 16, color: C.onBg }}>Loading performance data...</div>
       </div>
     </div>
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: C.warm, fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: "'Inter', system-ui, sans-serif" }}>
       <style>{`@media print { .no-print { display: none !important; } body { background: #fff !important; } .print-area { box-shadow: none !important; border: none !important; } }`}</style>
       <div className="no-print" style={{ background: C.ink, padding: "18px 24px 0", position: "sticky", top: 0, zIndex: 20 }}>
         <div style={{ maxWidth: 900, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v42</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v43</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
