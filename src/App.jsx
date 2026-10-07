@@ -53,8 +53,9 @@ const SERVICE_TARGETS = {
   "2026-12": { monthly: 73824.00, weekly: 18456.00 },
 };
 const COMPANY_METRICS = [
+  { id: "pink_ww",        label: "Pink Team (week/week)", kind: "count", dir: "lower", agg: "avg", autoPink: true },
   { id: "service_sales",  label: "Service Sales",  kind: "money", dir: "higher", agg: "sum" },
-  { id: "product_sales",  label: "Product Sales",  kind: "money", dir: "higher", agg: "sum" },
+  { id: "retail_gap",     label: "Retail Gap to Target", kind: "money", dir: "higher", agg: "sum" },
   { id: "pph",            label: "PPH",            kind: "money", dir: "higher", agg: "avg" },
   { id: "utilization",    label: "Utilization %",  kind: "pct",   dir: "higher", agg: "avg", band: [75, 88] },
   { id: "guest_rating",   label: "Guest Rating",   kind: "star",  dir: "higher", agg: "avg" },
@@ -86,7 +87,16 @@ function fmtCompany(kind, v) {
   if (kind === "pct")   return v + "%";
   if (kind === "star")  return v + "★";
   if (kind === "ten")   return v + "/10";
+  if (kind === "count") return String(v) + " pink";
   return String(v);
+}
+// Distinct active members with any pink card in a given week (matches the dashboard flag).
+function pinkMemberCount(activeTeam, week, allScores, monthlyScores) {
+  let n = 0;
+  activeTeam.forEach(m => {
+    if (getMemberCards(m).some(c => { const s = getCardStatus(c, m.id, week, allScores, monthlyScores); return s.pts !== null && !s.green; })) n++;
+  });
+  return n;
 }
 
 // ── LEADERSHIP FEEDBACK (upward feedback to Vicki & Payton) ────────────────────
@@ -179,33 +189,28 @@ const SCORECARDS = {
   manager: {
     label: "Manager",
     metrics: [
-      { id: "pink_green_ratio", label: "Pink to Green Ratio (week over week)", desc: "0 = more pink than last week · 1 = same or fewer · 2 = zero pink", source: "Scorecard" },
-      { id: "utilization",      label: "Utilization Rate (shop average)",      desc: "0 = <75% · 1 = 75–84% · 2 = 85–89%",                         source: "Phorest"   },
+      { id: "open_issues",      label: "Open Issues",                          desc: "0 = untouched/rolled over · 1 = resolved or in progress · 2 = resolved + system created to prevent recurrence", source: "Manual", since: "2026-10-05" },
       { id: "infractions",      label: "Infraction Rate",                      desc: "0 = any infractions · 1 = zero · 2 = zero + proactive reinforcement documented", source: "Manual" },
-      { id: "retail_gap",       label: "Retail Gap to Target",                 desc: "0 = moving away from 10% goal · 1 = holding/improving · 2 = +0.5%+ vs last week", source: "Phorest" },
-      { id: "stock",            label: "Stock Management",                     desc: "0 = missed or not placed · 1 = on time · 2 = early + variance flagged", source: "Manual" },
+      { id: "stock",            label: "Stocking",                             desc: "0 = missed or not placed · 1 = on time · 2 = early + variance flagged", source: "Manual" },
       { id: "team_checkins",    label: "Team Check-In Completion",             desc: "0 = <100% · 1 = 100% · 2 = 100% + dev note per member",       source: "Manual"    },
+      { id: "pink_delegation",  label: "Pink Team Delegation",                 desc: "0 = pink items not delegated/owned · 1 = delegated with a clear owner · 2 = delegated + followed through to resolution", source: "Manual", since: "2026-10-05" },
     ],
   },
   gm: {
     label: "Payton",
     metrics: [
-      { id: "pink_trend",       label: "Pink Team Trend (month over month)",   desc: "0 = more pink than last month · 1 = same or fewer than last month · 2 = zero pink this month", source: "Scorecard", cadence: "monthly" },
-      { id: "team_kpi_avg",     label: "Team KPI Average",                     desc: "0 = <50% · 1 = 50–74% · 2 = 75%+ · Auto-calculated from this week's scores", source: "Scorecard" },
-      { id: "open_issues",      label: "Open Issues",                          desc: "0 = untouched/rolled over · 1 = resolved or in progress · 2 = resolved + system created to prevent recurrence", source: "Manual" },
       { id: "hiring",           label: "Hiring Pipeline",                      desc: "0 = 0 interviews/mo · 1 = 1/mo · 2 = 2+/mo",                 source: "Manual",    cadence: "monthly" },
-      { id: "coaching_outcomes",label: "Coaching Outcomes (prior week)",       desc: "0 = coached but no change or got worse · 1 = measurable improvement but still pink · 2 = moved to green", source: "Scorecard" },
-      { id: "leadership_align", label: "Leadership Team Alignment",            desc: "0 = TL or Mgr missing targets · 1 = both meeting · 2 = both exceeding", source: "Scorecard" },
+      { id: "feedback_fulfilled", label: "Feedback Fulfilled",                 desc: "0 = leadership feedback not completed · 1 = completed on time · 2 = completed + acted on", source: "Manual", cadence: "monthly", since: "2026-10-05" },
+      { id: "coaching_outcomes",label: "Coaching Outcomes",                    desc: "0 = coached but no change or got worse · 1 = measurable improvement but still pink · 2 = moved to green", source: "Scorecard", cadence: "monthly" },
     ],
   },
   owner: {
     label: "Vicki",
     metrics: [
-      { id: "revenue",          label: "Revenue vs Monthly Target",            desc: "0 = <95% of $58,315 · 1 = 95–99% · 2 = 100%+",               source: "Phorest",   cadence: "monthly" },
       { id: "profit_margin",    label: "Operating Profit Margin",              desc: "0 = below target · 1 = at target · 2 = above target",         source: "Financial", cadence: "monthly", lag: true },
-      { id: "payroll_pct",      label: "Payroll %",                            desc: "0 = above target % · 1 = at target % · 2 = below target %",   source: "Financial", cadence: "monthly", lag: true },
-      { id: "engagement",       label: "Employee Engagement",                  desc: "0 = any involuntary turnover · 1 = zero turnover · 2 = zero + culture activity done", source: "Manual", cadence: "monthly" },
+      { id: "coaching_outcomes",label: "Coaching Outcomes",                    desc: "0 = coached but no change or got worse · 1 = measurable improvement but still pink · 2 = moved to green", source: "Scorecard", cadence: "monthly" },
       { id: "culture_initiatives", label: "Culture Initiatives Completed",     desc: "0 = none this month · 1 = 1 completed · 2 = 2+ completed",   source: "Manual",    cadence: "monthly" },
+      { id: "employee_success", label: "Employee Success (turnover + rating)", desc: "0 = involuntary turnover or rating decline · 1 = zero turnover, rating steady · 2 = zero turnover + rating improved", source: "Manual", cadence: "monthly", since: "2026-10-05" },
       { id: "leadership_obj",   label: "Leadership Objective Attainment",      desc: "0 = behind · 1 = on track · 2 = ahead + next initiative identified", source: "Manual", cadence: "monthly" },
     ],
   },
@@ -969,24 +974,33 @@ function CompanyNumRow({ label, sub, value, target, green, kind, editable, onCha
   );
 }
 
-function CompanyScorecardSection({ roster, notes, companyScores, week, onSetCompany, readOnly }) {
+function CompanyScorecardSection({ roster, notes, companyScores, week, onSetCompany, readOnly, allScores, monthlyScores, retailGoal }) {
   const activeTeam = roster.filter(m => m.active);
   const stylistCount = activeTeam.filter(m => getMemberCards(m).includes("stylist")).length;
   const mk = monthKeyOfWeek(week);
   const autoRating = teamSatisfactionAvg(notes, week, activeTeam);
   const wk = companyScores?.[week] || {};
 
+  // Pink Team week/week — auto from scores. Only meaningful once the week is scored.
+  const weekScored = !!(allScores && allScores[week] && Object.keys(allScores[week]).length);
+  const pinkThis = weekScored ? pinkMemberCount(activeTeam, week, allScores, monthlyScores) : null;
+  const pinkLast = pinkMemberCount(activeTeam, prevWeekKey(week), allScores, monthlyScores);
+  const pinkGreen = pinkThis == null ? null : (pinkThis <= pinkLast); // same/fewer or zero = on target
+  const tgtFor = id => id === "retail_gap" ? (retailGoal > 0 ? retailGoal : null) : companyTargetWeekly(id, mk, stylistCount);
+
   // Weekly rows
   const rows = COMPANY_METRICS.map(m => {
+    if (m.autoPink) return { m, value: pinkThis, target: null, green: pinkGreen, pinkThis, pinkLast };
     const value = m.auto ? autoRating : (typeof wk[m.id] === "number" ? wk[m.id] : null);
-    const target = companyTargetWeekly(m.id, mk, stylistCount);
+    const target = tgtFor(m.id);
     return { m, value, target, green: companyGreen(m, value, target) };
   });
   const greenCount = rows.filter(r => r.green === true).length;
   const scoredCount = rows.filter(r => r.value != null).length;
 
-  // Monthly rollup (sales summed, rates averaged; each week judged against its weekly bar)
-  const rollup = COMPANY_METRICS.map(m => {
+  // Monthly rollup (sales summed, rates averaged; each week judged against its weekly bar).
+  // Pink Team w/w is a weekly comparison — not rolled up.
+  const rollup = COMPANY_METRICS.filter(m => !m.autoPink).map(m => {
     let vals;
     if (m.auto) {
       vals = Object.keys(notes || {}).filter(w => monthKeyOfWeek(w) === mk)
@@ -996,7 +1010,7 @@ function CompanyScorecardSection({ roster, notes, companyScores, week, onSetComp
         .map(w => companyScores[w]?.[m.id]).filter(v => typeof v === "number");
     }
     if (!vals.length) return { m, value: null, target: null, green: null, n: 0 };
-    const perWeek = companyTargetWeekly(m.id, mk, stylistCount);
+    const perWeek = tgtFor(m.id);
     let value, target;
     if (m.agg === "sum") { value = Math.round(vals.reduce((a, b) => a + b, 0) * 100) / 100; target = perWeek != null ? Math.round(perWeek * vals.length * 100) / 100 : null; }
     else { value = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100; target = perWeek; }
@@ -1028,14 +1042,16 @@ function CompanyScorecardSection({ roster, notes, companyScores, week, onSetComp
       {rows.map(r => (
         <CompanyNumRow key={r.m.id}
           label={r.m.label}
-          sub={r.m.auto
-            ? `Auto from team satisfaction · target ${STYLIST_RATING_TARGET}+/10`
-            : `Target ${r.target == null ? "—" : fmtCompany(r.m.kind, r.target)}${r.m.dir === "lower" ? " or below" : "+"}`}
+          sub={r.m.autoPink
+            ? `Auto from scores · this wk ${r.pinkThis == null ? "—" : r.pinkThis} vs last wk ${r.pinkLast} · fewer or zero = on target`
+            : r.m.auto
+              ? `Auto from team satisfaction · target ${STYLIST_RATING_TARGET}+/10`
+              : `Target ${r.target == null ? "—" : fmtCompany(r.m.kind, r.target)}${r.m.dir === "lower" ? " or below" : "+"}`}
           value={r.value}
           target={r.target}
           green={r.green}
           kind={r.m.kind}
-          editable={!readOnly && !r.m.auto}
+          editable={!readOnly && !r.m.auto && !r.m.autoPink}
           onChange={raw => setVal(r.m.id, raw)}
         />
       ))}
@@ -1304,7 +1320,7 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
   );
 }
 
-function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores, companyScores, rocks }) {
+function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores, companyScores, rocks, retailGoal }) {
   const activeTeam = roster.filter(m => m.active);
   const wk = latestScoredWeek(allScores); // consistent with Wins/satisfaction — the last week actually scored
 
@@ -1313,8 +1329,14 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
   const entries = [];
   activeTeam.forEach(m => getMemberCards(m).forEach(card => {
     const st = getCardStatus(card, m.id, wk, allScores, monthlyScores);
-    entries.push({ key: m.id + "|" + card, name: m.name, cardLabel: SCORECARDS[card].label, pts: st.pts, green: st.green, pending: st.pending });
+    entries.push({ key: m.id + "|" + card, name: m.name, card, cardLabel: SCORECARDS[card].label, pts: st.pts, green: st.green, pending: st.pending });
   }));
+  // Keep the team scorecards and the leadership overlay cards in separate boxes.
+  const isLeadCard = e => LEADERSHIP_ROLES.includes(e.card);
+  const teamGreen = entries.filter(e => e.pts !== null && e.green && !isLeadCard(e));
+  const teamPink  = entries.filter(e => e.pts !== null && !e.green && !isLeadCard(e));
+  const leadGreen = entries.filter(e => e.pts !== null && e.green && isLeadCard(e));
+  const leadPink  = entries.filter(e => e.pts !== null && !e.green && isLeadCard(e));
   const greenEntries = entries.filter(e => e.pts !== null && e.green);
   const pinkEntries = entries.filter(e => e.pts !== null && !e.green);
 
@@ -1372,8 +1394,12 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
         );
       })()}
 
-      <TeamStatusList title="Green Team" icon="🟢" entries={greenEntries} color={C.green} bg={C.greenLight} />
-      <TeamStatusList title="Pink Team" icon="🔴" entries={pinkEntries} color={C.pink} bg={C.pinkLight} />
+      <div style={{ fontSize: 11, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Team</div>
+      <TeamStatusList title="Green Team" icon="🟢" entries={teamGreen} color={C.green} bg={C.greenLight} />
+      <TeamStatusList title="Pink Team" icon="🔴" entries={teamPink} color={C.pink} bg={C.pinkLight} />
+      <div style={{ fontSize: 11, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase", marginTop: 4 }}>Leadership</div>
+      <TeamStatusList title="Green — Leadership" icon="🟢" entries={leadGreen} color={C.green} bg={C.greenLight} />
+      <TeamStatusList title="Pink — Leadership" icon="🔴" entries={leadPink} color={C.pink} bg={C.pinkLight} />
 
       {/* Core Value Award — separate from Green/Pink and the bonus pool */}
       <div style={{ background: C.goldLight, border: `1.5px solid ${C.gold}66`, borderRadius: 12, padding: "16px 20px" }}>
@@ -1391,7 +1417,7 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
         </div>
       </div>
 
-      <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} week={latestCompanyWeek(companyScores)} readOnly onSetCompany={() => {}} />
+      <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} week={latestCompanyWeek(companyScores)} readOnly onSetCompany={() => {}} allScores={allScores} monthlyScores={monthlyScores} retailGoal={retailGoal} />
       <RockReview quarterKey={currentQuarterKey()} roster={roster} rocks={rocks} readOnly />
 
       <div style={{ background: C.steelLight, border: `1.5px solid ${C.steel}44`, borderRadius: 12, padding: "16px 20px" }}>
@@ -1700,7 +1726,7 @@ function RewardsPanel({ member, allScores, roster, poolEstimate }) {
   );
 }
 
-function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly, poolEstimate, actuals, onEnterActual, stylistTargets, settings, rocks, onAddRock, onUpdateRock, onDeleteRock }) {
+function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, monthlyScores, onSetMonthly, companyScores, onSetCompany, leadershipFb, onSetLeaderPulse, onSetLeaderMonthly, poolEstimate, actuals, onEnterActual, stylistTargets, settings, rocks, onAddRock, onUpdateRock, onDeleteRock, retailGoal }) {
   const [sel, setSel] = useState(null);
   const [card, setCard] = useState(null);
   const [detailMode, setDetailMode] = useState("score");
@@ -1936,7 +1962,7 @@ function ScoreView({ roster, allScores, onScore, holders, notes, onSetNote, mont
       })}
 
       <div style={{ height: 4 }} />
-      <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} week={reviewWeek} onSetCompany={onSetCompany} />
+      <CompanyScorecardSection roster={roster} notes={notes} companyScores={companyScores || {}} week={reviewWeek} onSetCompany={onSetCompany} allScores={allScores} monthlyScores={monthlyScores} retailGoal={retailGoal} />
       <RockReview quarterKey={quarterKeyOf(reviewWeek)} roster={roster} rocks={rocks} onAddRock={onAddRock} onUpdateRock={onUpdateRock} onDeleteRock={onDeleteRock} />
     </div>
   );
@@ -2250,6 +2276,18 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
           {inactive.map(m => <MemberRow key={m.id} m={m} />)}
         </div>
       )}
+
+      {/* Company Scorecard weekly retail goal — feeds the Retail Gap to Target metric */}
+      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "12px 20px", background: C.warm, borderBottom: `1.5px solid ${C.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>🛍️ Retail Goal (weekly)</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Flat weekly $ goal for the Company Scorecard's "Retail Gap to Target" — type the shop's retail number each week and it scores as a % of this goal.</div>
+        </div>
+        <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Weekly retail goal $</span>
+          <LazyInput type="number" inputMode="decimal" value={settings?.retail_goal || ""} onCommit={val => onSetSetting("retail_goal", val)} placeholder="e.g. 2500" style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, fontWeight: 700, width: 140 }} />
+        </div>
+      </div>
 
       {/* Bonus pool estimate — shop-wide, feeds each stylist's Rewards tab */}
       <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -3331,7 +3369,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v39</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v42</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
@@ -3351,8 +3389,8 @@ export default function RefineryApp() {
         </div>
       )}
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
-        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={!!(unlockedGroups.score || unlockedGroups.admin)} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} rocks={rocks} />}
-        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} actuals={actuals} onEnterActual={handleEnterActual} stylistTargets={stylistTargets} settings={settings} rocks={rocks} onAddRock={handleAddRock} onUpdateRock={handleUpdateRock} onDeleteRock={handleDeleteRock} />}
+        {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={!!(unlockedGroups.score || unlockedGroups.admin)} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} rocks={rocks} retailGoal={parseFloat(settings.retail_goal) || 0} />}
+        {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} actuals={actuals} onEnterActual={handleEnterActual} stylistTargets={stylistTargets} settings={settings} rocks={rocks} onAddRock={handleAddRock} onUpdateRock={handleUpdateRock} onDeleteRock={handleDeleteRock} retailGoal={parseFloat(settings.retail_goal) || 0} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} actuals={actuals} stylistTargets={stylistTargets} settings={settings} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} stylistTargets={stylistTargets} onSetStylistTarget={handleSetStylistTarget} settings={settings} onSetSetting={handleSetSetting} />}
