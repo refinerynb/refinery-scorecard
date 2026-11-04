@@ -2269,6 +2269,8 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
             <input type="date" value={editForm.hire_date || ""} onChange={e => setEditForm(f => ({ ...f, hire_date: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13 }} />
             <span style={{ fontSize: 10, color: C.muted }}>🌴 PTO $</span>
             <input placeholder="amount" value={editForm.pto_amount || ""} onChange={e => setEditForm(f => ({ ...f, pto_amount: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, width: 80 }} />
+            <span style={{ fontSize: 10, color: C.muted }}>⏱ hrs/wk</span>
+            <input placeholder="avail" inputMode="decimal" value={editForm.avail_hours ?? ""} onChange={e => setEditForm(f => ({ ...f, avail_hours: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, width: 64 }} />
             <button onClick={() => { onRosterChange("update", { ...m, ...editForm }); setEditId(null); }} style={{ padding: "6px 14px", borderRadius: 8, background: C.green, color: C.white, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Save</button>
             <button onClick={() => setEditId(null)} style={{ padding: "6px 14px", borderRadius: 8, background: C.border, color: C.ink, border: "none", fontSize: 12, cursor: "pointer" }}>Cancel</button>
           </div>
@@ -2279,7 +2281,7 @@ function RosterView({ roster, onRosterChange, holders, onSetHolder, allScores, o
               <div style={{ fontSize: 11, color: C.muted }}>{ROLE_OPTIONS.find(r => r.value === m.role)?.label}{m.start_date ? ` · Started ${weekLabelFromKey(m.start_date)}` : ""}{m.birthday ? ` · 🎂 ${birthdayLabel(m.birthday)}` : ""}{m.hire_date ? ` · 🎉 ${hireYearLabel(m.hire_date)}` : ""}</div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => { setEditId(m.id); setEditForm({ name: m.name, role: m.role, birthday: m.birthday || "", hire_date: m.hire_date || "", pto_amount: m.pto_amount || "" }); }} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 11, cursor: "pointer", color: C.muted }}>Edit</button>
+              <button onClick={() => { setEditId(m.id); setEditForm({ name: m.name, role: m.role, birthday: m.birthday || "", hire_date: m.hire_date || "", pto_amount: m.pto_amount || "", avail_hours: m.avail_hours ?? "" }); }} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 11, cursor: "pointer", color: C.muted }}>Edit</button>
               <button onClick={() => onRosterChange("toggle", m)} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${m.active ? C.pink : C.green}`, background: m.active ? C.pinkLight : C.greenLight, fontSize: 11, cursor: "pointer", fontWeight: 700, color: m.active ? C.pink : C.green }}>
                 {m.active ? "Deactivate" : "Activate"}
               </button>
@@ -2925,6 +2927,198 @@ function WeeklyReportBody({ wk, roster, allScores, monthlyScores, companyScores,
   );
 }
 
+// ── PERFORMANCE SIMULATOR ──────────────────────────────────────────────────
+// Open "what-if" tool. Pick a stylist + week, see PPH / Utilization / Revenue
+// per Booked Hour against target, then slide the three inputs to test scenarios.
+// Seeds Service Sales from recorded actuals and Available Hours from the roster;
+// NOTHING here writes to the database — Reset restores the recorded values.
+const UTIL_OVERBOOKED_PCT = 88; // above this the chair is over-full, not a win
+
+function diagnosePerformance(pph, util) {
+  if (pph == null || util == null) return null;
+  const lowPph = pph < PPH_FLOOR;
+  const lowUtil = util < UTILIZATION_TARGET_PCT;
+  const over = util > UTIL_OVERBOOKED_PCT;
+  if (!lowUtil && !lowPph) return {
+    tone: C.green, bg: C.greenLight,
+    title: over ? "On target — but watch the overbooking" : "On track",
+    body: over
+      ? `Both numbers are at or above target, but utilization is over ${UTIL_OVERBOOKED_PCT}% — the chair is packed tight. Protect buffer time and keep room for future appointments so quality and rebooking don't slip.`
+      : "Booking and revenue-per-hour are both at or above target. Hold the line, and this is the stylist to look at for a price increase.",
+  };
+  if (lowUtil && !lowPph) return {
+    tone: C.steel, bg: C.steelLight,
+    title: "Booking opportunity",
+    body: "Revenue per hour is strong — the money per booked hour is there — but the chair isn't full enough. The lever is filling the book: rebooking, waitlist, online availability, and prompting future appointments. Pricing is not the problem here.",
+  };
+  if (!lowUtil && lowPph) return {
+    tone: C.gold, bg: C.goldLight,
+    title: "Revenue-productivity opportunity",
+    body: "The chair is full, but each available hour isn't earning enough. The lever is revenue per hour — service pricing, add-on / upgrade mix, and retail attached to the visit — not more bookings. Adding appointments won't fix this.",
+  };
+  return {
+    tone: C.pink, bg: C.pinkLight,
+    title: "Capacity and revenue opportunity",
+    body: "Both levers are below target: the book isn't full and each hour isn't earning enough. Start with whichever is further from target — usually fill the book first, then work on revenue per hour.",
+  };
+}
+
+function PerformanceView({ roster, actuals, allScores }) {
+  const people = roster.filter(m => m.active).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const [memberId, setMemberId] = useState(() => people[0]?.id || "");
+  const [wk, setWk] = useState(() => latestScoredWeek(allScores));
+
+  const member = people.find(m => m.id === memberId) || null;
+  const recordedSales = actuals?.[wk]?.[memberId]?.stylist?.service_sales;
+  const hasRecordedSales = recordedSales != null;
+  const rosterAvail = member && member.avail_hours != null && member.avail_hours !== "" ? Number(member.avail_hours) : null;
+
+  const seededSales = hasRecordedSales ? String(recordedSales) : "";
+  const seededAvail = rosterAvail != null ? String(rosterAvail) : "";
+
+  // Editable scenario inputs — re-seeded whenever stylist or week changes.
+  const [sales, setSales] = useState(seededSales);
+  const [avail, setAvail] = useState(seededAvail);
+  const [booked, setBooked] = useState("");
+  useEffect(() => {
+    setSales(hasRecordedSales ? String(recordedSales) : "");
+    setAvail(rosterAvail != null ? String(rosterAvail) : "");
+    setBooked("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberId, wk]);
+
+  const nSales = parseFloat(sales) || 0;
+  const nAvail = parseFloat(avail) || 0;
+  const hasBooked = booked !== "" && !isNaN(parseFloat(booked));
+  const nBooked = hasBooked ? parseFloat(booked) : 0;
+
+  const pph = nAvail > 0 ? nSales / nAvail : null;
+  const util = nAvail > 0 && hasBooked ? (nBooked / nAvail) * 100 : null;
+  const rpbh = hasBooked && nBooked > 0 ? nSales / nBooked : null;
+  const dx = diagnosePerformance(pph, util);
+
+  const dirty = sales !== seededSales || avail !== seededAvail || booked !== "";
+  const reset = () => { setSales(seededSales); setAvail(seededAvail); setBooked(""); };
+
+  const salesMax = Math.max(4000, Math.ceil((Math.max(nSales, hasRecordedSales ? recordedSales : 0) * 1.6) / 500) * 500);
+  const hrMax = Math.max(50, Math.ceil(Math.max(nAvail, nBooked) / 5) * 5);
+  const money = v => "$" + Math.round(v).toLocaleString();
+
+  const field = (label, val, setVal, max, step, fmt) => (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>{label}</span>
+        <input value={val} onChange={e => setVal(e.target.value)} inputMode="decimal"
+          style={{ width: 96, padding: "5px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, textAlign: "right", fontWeight: 700, color: C.ink }} />
+      </div>
+      <input type="range" min={0} max={max} step={step} value={val === "" ? 0 : Math.min(parseFloat(val) || 0, max)}
+        onChange={e => setVal(e.target.value)} style={{ width: "100%", accentColor: C.gold }} />
+    </div>
+  );
+
+  const KpiCard = ({ label, value, fmt, target, targetLabel, status, statusText, note }) => {
+    const col = status === "good" ? C.green : status === "over" ? C.gold : status === "bad" ? C.pink : C.muted;
+    const bgc = status === "good" ? C.greenLight : status === "over" ? C.goldLight : status === "bad" ? C.pinkLight : C.warm;
+    const pct = (value != null && target) ? Math.max(0, Math.min(1.3, value / target)) : 0;
+    return (
+      <div style={{ flex: "1 1 180px", minWidth: 170, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "16px 18px" }}>
+        <div style={{ fontSize: 10, letterSpacing: 1.5, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
+        <div style={{ fontSize: 30, fontWeight: 800, color: value == null ? C.muted : C.ink, margin: "4px 0 2px", letterSpacing: -0.5 }}>
+          {value == null ? "N/A" : fmt(value)}
+        </div>
+        {targetLabel && <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>{targetLabel}</div>}
+        {target != null && (
+          <div style={{ height: 7, background: C.warm, borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ width: `${Math.min(100, pct * 100 / 1.3 * 1.3)}%`, maxWidth: "100%", height: "100%", background: col, borderRadius: 4 }} />
+          </div>
+        )}
+        {value != null
+          ? <span style={{ fontSize: 11, fontWeight: 700, color: col, background: bgc, padding: "2px 8px", borderRadius: 20 }}>{statusText}</span>
+          : <span style={{ fontSize: 11, color: C.muted, fontStyle: "italic" }}>{note}</span>}
+      </div>
+    );
+  };
+
+  const pphStatus = pph == null ? null : (pph >= PPH_FLOOR ? "good" : "bad");
+  const utilStatus = util == null ? null : (util < UTILIZATION_TARGET_PCT ? "bad" : util > UTIL_OVERBOOKED_PCT ? "over" : "good");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: C.ink, borderRadius: 14, padding: "20px 22px", color: C.white }}>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>Performance Simulator</div>
+        <div style={{ fontSize: 19, fontWeight: 800, margin: "4px 0 4px" }}>What-if scenario tool</div>
+        <div style={{ fontSize: 12.5, color: "#C9CDD4", lineHeight: 1.6 }}>
+          Pick a stylist and week to load their real numbers, then drag the sliders to test changes. Nothing here saves or touches scores — it's a sandbox. Hit <strong>Reset</strong> to snap back to the recorded week.
+        </div>
+      </div>
+
+      {/* Selectors */}
+      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 18px", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 10, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Stylist</span>
+          <select value={memberId} onChange={e => setMemberId(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, background: C.white, fontWeight: 700, color: C.ink, minWidth: 160 }}>
+            {people.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 10, letterSpacing: 1, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Week</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => setWk(prevWeekKey(wk))} style={{ padding: "7px 11px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer", fontWeight: 700, color: C.ink }}>◀</button>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.ink, minWidth: 150, textAlign: "center" }}>{weekRangeLabel(wk)}</span>
+            <button onClick={() => setWk(nextWeekKey(wk))} style={{ padding: "7px 11px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.white, cursor: "pointer", fontWeight: 700, color: C.ink }}>▶</button>
+          </div>
+        </div>
+        <button onClick={() => setWk(latestScoredWeek(allScores))} style={{ padding: "7px 12px", borderRadius: 8, border: `1.5px solid ${C.gold}`, background: C.goldLight, color: C.gold, cursor: "pointer", fontWeight: 700, fontSize: 11, alignSelf: "flex-end" }}>latest scored →</button>
+      </div>
+
+      {/* KPI cards */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <KpiCard label="PPH" value={pph} fmt={v => money(v)} target={PPH_FLOOR}
+          targetLabel={`Target ${money(PPH_FLOOR)} / avail hr`} status={pphStatus}
+          statusText={pph >= PPH_FLOOR ? "At / above target" : `${money(PPH_FLOOR - pph)} / hr under`}
+          note="Enter Available Hours to calculate" />
+        <KpiCard label="Utilization" value={util} fmt={v => v.toFixed(0) + "%"} target={UTILIZATION_TARGET_PCT}
+          targetLabel={`Target ${UTILIZATION_TARGET_PCT}%+ (over ${UTIL_OVERBOOKED_PCT}% = overbooked)`} status={utilStatus}
+          statusText={util == null ? "" : util < UTILIZATION_TARGET_PCT ? `${(UTILIZATION_TARGET_PCT - util).toFixed(0)} pts under` : util > UTIL_OVERBOOKED_PCT ? "Overbooked" : "On target"}
+          note="Enter Booked + Available Hours" />
+        <KpiCard label="Rev / Booked Hr" value={rpbh} fmt={v => money(v)} target={null}
+          targetLabel="Earning power per hour actually worked" status={rpbh == null ? null : "good"}
+          statusText="Sales ÷ booked hours" note="Enter Booked Hours" />
+      </div>
+
+      {/* Diagnosis */}
+      {dx && (
+        <div style={{ background: dx.bg, border: `1.5px solid ${dx.tone}55`, borderRadius: 12, padding: "16px 20px" }}>
+          <div style={{ fontSize: 10, letterSpacing: 2, color: dx.tone, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Diagnosis</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 6 }}>{dx.title}</div>
+          <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.65 }}>{dx.body}</div>
+        </div>
+      )}
+
+      {/* Inputs / sliders */}
+      <div style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "18px 20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>Scenario inputs</div>
+          <button onClick={reset} disabled={!dirty} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${dirty ? C.pink : C.border}`, background: dirty ? C.pinkLight : C.warm, color: dirty ? C.pink : C.muted, fontWeight: 700, fontSize: 12, cursor: dirty ? "pointer" : "default" }}>↺ Reset to recorded</button>
+        </div>
+        {field("Service Sales ($)", sales, setSales, salesMax, 10)}
+        {field("Available Hours (scheduled)", avail, setAvail, hrMax, 1)}
+        {field("Booked Hours (worked)", booked, setBooked, hrMax, 1)}
+        <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.6, marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+          Service Sales {hasRecordedSales ? <>seeded from this week's recorded <strong>{money(recordedSales)}</strong></> : <span style={{ color: C.pink }}>has no recorded value for this week — enter it manually</span>}.{" "}
+          Available Hours {rosterAvail != null ? <>seeded from {member?.name}'s roster ({rosterAvail} hrs/wk)</> : <span style={{ color: C.pink }}>not set on the roster — add it under Roster, or enter it here</span>}.{" "}
+          Booked Hours isn't tracked yet, so enter it from Phorest for a real reading.
+        </div>
+      </div>
+
+      {/* Formula key */}
+      <div style={{ fontSize: 11, color: C.onBg, lineHeight: 1.7, padding: "0 4px" }}>
+        <strong style={{ color: C.gold }}>How it's figured:</strong> PPH = Service Sales ÷ Available Hours · Utilization = Booked ÷ Available × 100 · Rev / Booked Hr = Service Sales ÷ Booked Hours. Zero hours show as N/A.
+      </div>
+    </div>
+  );
+}
+
 export default function RefineryApp() {
   const [roster, setRoster] = useState([]);
   const [allScores, setAllScores] = useState({});
@@ -3427,7 +3621,7 @@ export default function RefineryApp() {
       await supabase.from("roster").update({ active: updated.active, start_date: updated.start_date }).eq("id", member.id);
       setRoster(prev => prev.map(m => m.id === member.id ? updated : m));
     } else if (action === "update") {
-      await supabase.from("roster").update({ name: member.name, role: member.role, birthday: member.birthday || null, hire_date: member.hire_date || null, pto_amount: member.pto_amount || null, pto_used_year: member.pto_used_year || null, club_100: member.club_100 || null }).eq("id", member.id);
+      await supabase.from("roster").update({ name: member.name, role: member.role, birthday: member.birthday || null, hire_date: member.hire_date || null, pto_amount: member.pto_amount || null, pto_used_year: member.pto_used_year || null, club_100: member.club_100 || null, avail_hours: (member.avail_hours === "" || member.avail_hours == null) ? null : Number(member.avail_hours) }).eq("id", member.id);
       setRoster(prev => prev.map(m => m.id === member.id ? member : m));
     }
   };
@@ -3459,12 +3653,13 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v49</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v50</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
             <NavBtn id="score" label="Score This Week" />
             <NavBtn id="history" label="History & Tracking" />
+            <NavBtn id="performance" label="Performance" />
             <NavBtn id="coaching" label="Coaching" />
             <NavBtn id="roster" label="Roster" />
             <NavBtn id="reports" label="Reports" />
@@ -3482,6 +3677,7 @@ export default function RefineryApp() {
         {view === "dashboard" && <Dashboard roster={roster} allScores={allScores} holders={holders} shoutouts={shoutouts} onAddShoutout={handleAddShoutout} onDeleteShoutout={handleDeleteShoutout} unlocked={!!(unlockedGroups.score || unlockedGroups.admin)} notes={notes} monthlyScores={monthlyScores} companyScores={companyScores} rocks={rocks} retailGoal={parseFloat(settings.retail_goal) || 0} />}
         {view === "score" && <ScoreView roster={roster} allScores={allScores} onScore={handleScore} holders={holders} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} onSetMonthly={handleSetMonthly} companyScores={companyScores} onSetCompany={handleSetCompany} leadershipFb={leadershipFb} onSetLeaderPulse={handleSetLeaderPulse} onSetLeaderMonthly={handleSetLeaderMonthly} poolEstimate={parseFloat(settings.pool_estimate) || 0} actuals={actuals} onEnterActual={handleEnterActual} stylistTargets={stylistTargets} settings={settings} rocks={rocks} onAddRock={handleAddRock} onUpdateRock={handleUpdateRock} onDeleteRock={handleDeleteRock} retailGoal={parseFloat(settings.retail_goal) || 0} />}
         {view === "history" && <HistoryView roster={roster} allScores={allScores} holders={holders} monthlyScores={monthlyScores} />}
+        {view === "performance" && <PerformanceView roster={roster} actuals={actuals} allScores={allScores} />}
         {view === "coaching" && <CoachingView roster={roster} allScores={allScores} notes={notes} onSetNote={handleSetNote} monthlyScores={monthlyScores} leadershipFb={leadershipFb} actuals={actuals} stylistTargets={stylistTargets} settings={settings} />}
         {view === "roster" && <RosterView roster={roster} onRosterChange={handleRosterChange} holders={holders} onSetHolder={handleSetHolder} allScores={allScores} onClearWeek={handleClearWeek} poolEstimate={settings.pool_estimate || ""} onSetPoolEstimate={v => handleSetSetting("pool_estimate", v)} stylistTargets={stylistTargets} onSetStylistTarget={handleSetStylistTarget} settings={settings} onSetSetting={handleSetSetting} />}
         {view === "reports" && <ReportsView roster={roster} allScores={allScores} monthlyScores={monthlyScores} companyScores={companyScores} actuals={actuals} stylistTargets={stylistTargets} settings={settings} rocks={rocks} notes={notes} poolEstimate={parseFloat(settings.pool_estimate) || 0} />}
