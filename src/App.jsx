@@ -5,6 +5,24 @@ const SUPABASE_URL = "https://xhqnvaizvczspcwzrpnu.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhocW52YWl6dmN6c3Bjd3pycG51Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0OTQ2MjUsImV4cCI6MjA5ODA3MDYyNX0.oiUlNoe4833clEN1AgbC-0368S7oNzjYrHg-YkkHmxo";
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Supabase/PostgREST returns at most 1000 rows per request. Our time-series tables
+// (scores, actuals, etc.) grow past that, so we page through ALL rows — otherwise
+// the newest weeks silently fall off the end and never load.
+async function fetchAllRows(table, orderCol) {
+  const pageSize = 1000;
+  let from = 0, all = [];
+  for (let guard = 0; guard < 100; guard++) {
+    let q = supabase.from(table).select("*").range(from, from + pageSize - 1);
+    if (orderCol) q = q.order(orderCol.col, { ascending: orderCol.asc });
+    const { data, error } = await q;
+    if (error || !data) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
 const C = {
   ink: "#1C1C1C", warm: "#F6F2EC", gold: "#B8966E", goldLight: "#EDE0CE",
   pink: "#D94F4F", pinkLight: "#FDEAEA", green: "#3A7D5A", greenLight: "#E6F4ED",
@@ -2927,11 +2945,11 @@ export default function RefineryApp() {
 
   useEffect(() => {
     async function loadRoster() {
-      const { data, error } = await supabase.from("roster").select("*").order("name");
+      const data = await fetchAllRows("roster", { col: "name", asc: true }); const error = null;
       if (!error && data) setRoster(data);
     }
     async function loadScores() {
-      const { data, error } = await supabase.from("scores").select("*");
+      const data = await fetchAllRows("scores"); const error = null;
       if (!error && data) {
         const structured = {};
         data.forEach(row => {
@@ -2945,7 +2963,7 @@ export default function RefineryApp() {
       setLoading(false);
     }
     async function loadHolders() {
-      const { data, error } = await supabase.from("core_value_holder").select("*");
+      const data = await fetchAllRows("core_value_holder"); const error = null;
       if (!error && data) {
         const h = {};
         data.forEach(r => { h[r.month_key] = r.member_id; });
@@ -2954,12 +2972,12 @@ export default function RefineryApp() {
       // If the table doesn't exist yet, holders simply stays empty (no crash).
     }
     async function loadShoutouts() {
-      const { data, error } = await supabase.from("shout_outs").select("*").order("created_at", { ascending: false });
+      const data = await fetchAllRows("shout_outs", { col: "created_at", asc: false }); const error = null;
       if (!error && data) setShoutouts(data);
       // Missing table → stays empty, no crash.
     }
     async function loadNotes() {
-      const { data, error } = await supabase.from("member_week_notes").select("*");
+      const data = await fetchAllRows("member_week_notes"); const error = null;
       if (!error && data) {
         const structured = {};
         data.forEach(r => {
@@ -2970,7 +2988,7 @@ export default function RefineryApp() {
       // Missing table → stays empty, no crash.
     }
     async function loadMonthly() {
-      const { data, error } = await supabase.from("monthly_scores").select("*");
+      const data = await fetchAllRows("monthly_scores"); const error = null;
       if (!error && data) {
         const structured = {};
         data.forEach(r => {
@@ -2984,7 +3002,7 @@ export default function RefineryApp() {
       // Missing table → stays empty, no crash.
     }
     async function loadCompany() {
-      const { data, error } = await supabase.from("company_scores").select("*");
+      const data = await fetchAllRows("company_scores"); const error = null;
       if (!error && data) {
         const structured = {};
         data.forEach(r => {
@@ -2995,7 +3013,7 @@ export default function RefineryApp() {
       // Missing table → stays empty, no crash.
     }
     async function loadLeadership() {
-      const { data, error } = await supabase.from("leadership_feedback").select("*");
+      const data = await fetchAllRows("leadership_feedback"); const error = null;
       if (!error && data) {
         const pulse = {}, monthly = {};
         data.forEach(r => {
@@ -3007,7 +3025,7 @@ export default function RefineryApp() {
       // Missing table → stays empty, no crash.
     }
     async function loadSettings() {
-      const { data, error } = await supabase.from("app_settings").select("*");
+      const data = await fetchAllRows("app_settings"); const error = null;
       if (!error && data) {
         const s = {};
         data.forEach(r => { s[r.key] = r.value; });
@@ -3015,7 +3033,7 @@ export default function RefineryApp() {
       }
     }
     async function loadTargets() {
-      const { data, error } = await supabase.from("stylist_targets").select("*");
+      const data = await fetchAllRows("stylist_targets"); const error = null;
       if (!error && data) {
         const structured = {};
         data.forEach(r => {
@@ -3026,7 +3044,7 @@ export default function RefineryApp() {
       }
     }
     async function loadActuals() {
-      const { data, error } = await supabase.from("metric_actuals").select("*");
+      const data = await fetchAllRows("metric_actuals"); const error = null;
       if (!error && data) {
         const s = {};
         data.forEach(r => {
@@ -3039,7 +3057,7 @@ export default function RefineryApp() {
       }
     }
     async function loadRocks() {
-      const { data, error } = await supabase.from("rocks").select("*");
+      const data = await fetchAllRows("rocks"); const error = null;
       if (!error && data) {
         const s = {};
         data.forEach(r => { s[r.id] = { id: r.id, quarter_key: r.quarter_key, member_id: r.member_id, title: r.title || "", status: r.status || "not_started" }; });
@@ -3441,7 +3459,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v48</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v49</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
