@@ -470,12 +470,25 @@ const DEFAULT_STANDARDS = {
 };
 // Personal Service/Product targets: quarter-specific Roster value, else legacy code default.
 function getStylistTarget(memberId, qKey, stylistTargets) {
-  const row = (stylistTargets && stylistTargets[qKey] && stylistTargets[qKey][memberId]) || {};
+  // Each target field: use the current quarter's value, else carry forward from the
+  // most recent EARLIER quarter that set it, else the legacy default. This keeps
+  // scoring working when a new quarter starts before its targets are re-entered
+  // (otherwise a null target makes the metric unscoreable and hides the card).
+  const pick = field => {
+    if (stylistTargets?.[qKey]?.[memberId]?.[field] != null) return stylistTargets[qKey][memberId][field];
+    const earlier = Object.keys(stylistTargets || {}).filter(k => k < qKey).sort().reverse();
+    for (const k of earlier) {
+      const v = stylistTargets[k]?.[memberId]?.[field];
+      if (v != null) return v;
+    }
+    return null;
+  };
   const legacy = STYLIST_TARGETS[memberId] || {};
+  const service = pick("service"), product = pick("product"), guests = pick("guests");
   return {
-    service: row.service != null ? row.service : (legacy.serviceWeekly != null ? legacy.serviceWeekly : null),
-    product: row.product != null ? row.product : (legacy.productWeekly != null ? legacy.productWeekly : null),
-    guests: row.guests != null ? row.guests : null,
+    service: service != null ? service : (legacy.serviceWeekly != null ? legacy.serviceWeekly : null),
+    product: product != null ? product : (legacy.productWeekly != null ? legacy.productWeekly : null),
+    guests: guests != null ? guests : null,
   };
 }
 function getStandards(qKey, settings) {
@@ -1341,6 +1354,20 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
   const greenEntries = entries.filter(e => e.pts !== null && e.green);
   const pinkEntries = entries.filter(e => e.pts !== null && !e.green);
 
+  // Incomplete cards for the displayed week — so a card missing one number is SHOWN
+  // (named, with what's missing) instead of silently dropping off Green/Pink.
+  const incompleteEntries = [];
+  activeTeam.forEach(m => getMemberCards(m).forEach(card => {
+    const st = getCardStatus(card, m.id, wk, allScores, monthlyScores);
+    if (st.pts === null) {
+      const weekS = allScores?.[wk]?.[m.id]?.[card] || {};
+      const missing = SCORECARDS[card].metrics
+        .filter(mt => metricActiveForWeek(mt, wk) && mt.cadence !== "monthly" && !mt.handicap && mt.softDefault == null && weekS[mt.id] === undefined)
+        .map(mt => mt.label);
+      incompleteEntries.push({ key: m.id + "|" + card, name: m.name, cardLabel: SCORECARDS[card].label, missing });
+    }
+  }));
+
   // Team Flag stays people-based: how many distinct members have any pink card.
   const pinkMemberIds = new Set();
   activeTeam.forEach(m => {
@@ -1401,6 +1428,25 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
       <div style={{ fontSize: 11, letterSpacing: 1, color: C.onBg, fontWeight: 700, textTransform: "uppercase", marginTop: 4 }}>Leadership</div>
       <TeamStatusList title="Green — Leadership" icon="🟢" entries={leadGreen} color={C.green} bg={C.greenLight} />
       <TeamStatusList title="Pink — Leadership" icon="🔴" entries={leadPink} color={C.pink} bg={C.pinkLight} />
+
+      {incompleteEntries.length > 0 && (
+        <div style={{ background: C.white, border: `1.5px solid ${C.gold}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ padding: "10px 20px", background: C.goldLight, borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+            <span>⏳</span>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.gold }}>Not fully scored this week ({incompleteEntries.length})</div>
+          </div>
+          <div style={{ padding: "8px 20px 4px", fontSize: 11, color: C.muted }}>These cards are missing a number for the week of {weekLabelFromKey(wk)}, so they don't show in Green/Pink yet.</div>
+          {incompleteEntries.map((e, i) => (
+            <div key={e.key} style={{ display: "flex", alignItems: "center", padding: "10px 20px", gap: 10, borderBottom: i < incompleteEntries.length - 1 ? `1px solid ${C.border}` : "none" }}>
+              <Avatar name={e.name} size={30} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{e.name}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>{e.cardLabel}{e.missing.length ? ` · needs: ${e.missing.join(", ")}` : " · not started"}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Core Value Award — separate from Green/Pink and the bonus pool */}
       <div style={{ background: C.goldLight, border: `1.5px solid ${C.gold}66`, borderRadius: 12, padding: "16px 20px" }}>
@@ -3370,7 +3416,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v45</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v47</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
