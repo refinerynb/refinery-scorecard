@@ -2977,36 +2977,30 @@ function PerformanceView({ roster, actuals, allScores }) {
   const seededAvail = rosterAvail != null ? String(rosterAvail) : "";
 
   // Editable scenario inputs — re-seeded whenever stylist or week changes.
+  // Utilization is the one number you enter (straight off the weekly Phorest
+  // report); booked hours is DERIVED from it (Booked = Utilization × Available).
   const [sales, setSales] = useState(seededSales);
   const [avail, setAvail] = useState(seededAvail);
-  const [booked, setBooked] = useState("");
+  const [utilPct, setUtilPct] = useState("");
   useEffect(() => {
     setSales(hasRecordedSales ? String(recordedSales) : "");
     setAvail(rosterAvail != null ? String(rosterAvail) : "");
-    setBooked("");
+    setUtilPct("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberId, wk]);
 
   const nSales = parseFloat(sales) || 0;
   const nAvail = parseFloat(avail) || 0;
-  const hasBooked = booked !== "" && !isNaN(parseFloat(booked));
-  const nBooked = hasBooked ? parseFloat(booked) : 0;
+  const hasUtil = utilPct !== "" && !isNaN(parseFloat(utilPct)) && parseFloat(utilPct) > 0;
+  const util = hasUtil ? parseFloat(utilPct) : null;
+  const nBooked = (hasUtil && nAvail > 0) ? (util / 100) * nAvail : 0;
 
   const pph = nAvail > 0 ? nSales / nAvail : null;
-  const util = nAvail > 0 && hasBooked ? (nBooked / nAvail) * 100 : null;
-  const rpbh = hasBooked && nBooked > 0 ? nSales / nBooked : null;
+  const rpbh = nBooked > 0 ? nSales / nBooked : null;
   const dx = diagnosePerformance(pph, util);
 
-  // Utilization is what you have from Phorest; entering it fills Booked Hours
-  // (Booked = Utilization × Available). Booked stays editable too — two-way.
-  const utilDisplay = util != null ? String(Math.round(util)) : "";
-  const setUtil = v => {
-    if (v === "" || isNaN(parseFloat(v))) { setBooked(""); return; }
-    if (nAvail > 0) setBooked(String(+((parseFloat(v) / 100) * nAvail).toFixed(2)));
-  };
-
-  const dirty = sales !== seededSales || avail !== seededAvail || booked !== "";
-  const reset = () => { setSales(seededSales); setAvail(seededAvail); setBooked(""); };
+  const dirty = sales !== seededSales || avail !== seededAvail || utilPct !== "";
+  const reset = () => { setSales(seededSales); setAvail(seededAvail); setUtilPct(""); };
 
   const salesMax = Math.max(2500, Math.ceil(Math.max(nSales, hasRecordedSales ? recordedSales : 0) / 100) * 100);
   const hrMax = Math.max(50, Math.ceil(Math.max(nAvail, nBooked) / 5) * 5);
@@ -3088,10 +3082,10 @@ function PerformanceView({ roster, actuals, allScores }) {
         <KpiCard label="Utilization" value={util} fmt={v => v.toFixed(0) + "%"} target={UTILIZATION_TARGET_PCT}
           targetLabel={`Target ${UTILIZATION_TARGET_PCT}%+ (over ${UTIL_OVERBOOKED_PCT}% = overbooked)`} status={utilStatus}
           statusText={util == null ? "" : util < UTILIZATION_TARGET_PCT ? `${(UTILIZATION_TARGET_PCT - util).toFixed(0)} pts under` : util > UTIL_OVERBOOKED_PCT ? "Overbooked" : "On target"}
-          note="Enter Utilization + Available Hours" />
+          note="Enter Utilization %" />
         <KpiCard label="Rev / Booked Hr" value={rpbh} fmt={v => money(v)} target={null}
           targetLabel="Earning power per hour actually worked" status={rpbh == null ? null : "good"}
-          statusText="Sales ÷ booked hours" note="Enter Booked Hours" />
+          statusText="Sales ÷ booked hours" note="Enter Utilization %" />
       </div>
 
       {/* Diagnosis */}
@@ -3111,18 +3105,17 @@ function PerformanceView({ roster, actuals, allScores }) {
         </div>
         {field("Service Sales ($)", sales, setSales, salesMax, 10)}
         {field("Available Hours (scheduled)", avail, setAvail, hrMax, 1)}
-        {field("Utilization % (from Phorest)", utilDisplay, setUtil, 120, 1)}
-        {field("Booked Hours (auto from utilization)", booked, setBooked, hrMax, 1)}
+        {field("Utilization % (from Phorest report)", utilPct, setUtilPct, 120, 1)}
         <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.6, marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
           Service Sales {hasRecordedSales ? <>seeded from this week's recorded <strong>{money(recordedSales)}</strong></> : <span style={{ color: C.pink }}>has no recorded value for this week — enter it manually</span>}.{" "}
           Available Hours {rosterAvail != null ? <>seeded from {member?.name}'s roster ({rosterAvail} hrs/wk)</> : <span style={{ color: C.pink }}>not set on the roster — add it under Roster, or enter it here</span>}.{" "}
-          Enter <strong>Utilization</strong> from Phorest and Booked Hours fills in automatically (Utilization × Available) — or type Booked Hours directly and Utilization follows.
+          <strong>Utilization</strong> is the only number you enter — straight off your weekly Phorest report. The simulator works out booked hours from it ({hasUtil && nAvail > 0 ? <>Utilization × Available = <strong>{nBooked.toFixed(1)} hrs</strong></> : "Utilization × Available"}) for the revenue-per-hour math.
         </div>
       </div>
 
       {/* Formula key */}
       <div style={{ fontSize: 11, color: C.onBg, lineHeight: 1.7, padding: "0 4px" }}>
-        <strong style={{ color: C.gold }}>How it's figured:</strong> PPH = Service Sales ÷ Available Hours · Utilization = Booked ÷ Available × 100 · Rev / Booked Hr = Service Sales ÷ Booked Hours. Zero hours show as N/A.
+        <strong style={{ color: C.gold }}>How it's figured:</strong> PPH = Service Sales ÷ Available Hours · Booked Hours = Utilization × Available (derived) · Rev / Booked Hr = Service Sales ÷ Booked Hours. Zero hours show as N/A.
       </div>
     </div>
   );
@@ -3662,7 +3655,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v51</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v53</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
