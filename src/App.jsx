@@ -802,6 +802,22 @@ function ScorecardPanel({ member, cardType, scores, onScore, week, monthlyScores
   const maxAvail = counted * per;
   const isGreen = pts !== null && pts >= counted; // a 1 on every counted metric
   const stdz = standards || DEFAULT_STANDARDS;
+
+  // Auto-repair: if a number was entered earlier when its target was missing, the
+  // raw number saved but no 0/1/2 did. Now that a target resolves, persist the
+  // derived score so the card completes and the person shows on the dashboard.
+  useEffect(() => {
+    if (cardType !== "stylist") return;
+    card.metrics.forEach(m => {
+      if (!m.score || !metricActiveForWeek(m, week)) return;
+      const av = actuals ? actuals[m.id] : undefined;
+      if (av == null) return;
+      const derived = autoScoreMetric(av, m.score, targets, stdz);
+      if (derived != null && scores?.[m.id] !== derived) onEnterActual(m.id, av, derived);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardType, week, member.id, JSON.stringify(actuals), JSON.stringify(scores), JSON.stringify(targets)]);
+
   const options = yesNo
     ? [{ v: 0, l: "No", c: C.pink }, { v: 1, l: "Yes", c: C.green }]
     : [{ v: 0, l: null, c: SCORE_COLOR[0] }, { v: 1, l: null, c: SCORE_COLOR[1] }, { v: 2, l: null, c: SCORE_COLOR[2] }];
@@ -1336,7 +1352,10 @@ function RecognitionSection({ roster, allScores, shoutouts, onAdd, onDelete, unl
 
 function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDeleteShoutout, unlocked, notes, monthlyScores, companyScores, rocks, retailGoal }) {
   const activeTeam = roster.filter(m => m.active);
-  const wk = latestScoredWeek(allScores); // consistent with Wins/satisfaction — the last week actually scored
+  // Week the dashboard shows. Defaults to the latest week with scores, but is
+  // navigable so it never gets stuck on the wrong week (e.g. when a new week's
+  // numbers were entered but couldn't score yet).
+  const [wk, setWk] = useState(() => latestScoredWeek(allScores));
 
   // Per-card entries (role cards only — Core Value never appears in Green/Pink).
   // Monthly-aware: pending monthly metrics don't count; green scales to what's knowable.
@@ -1397,12 +1416,18 @@ function Dashboard({ roster, allScores, holders, shoutouts, onAddShoutout, onDel
         ))}
       </div>
 
-      <div style={{ fontSize: 12, color: C.onBg, fontWeight: 600 }}>Week of {weekLabelFromKey(wk)} · dual-role members are listed once per card</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <button onClick={() => setWk(prevWeekKey(wk))} aria-label="Previous week" style={{ width: 32, height: 32, borderRadius: 8, border: `1.5px solid ${C.gold}66`, background: "transparent", color: C.gold, fontSize: 14, cursor: "pointer" }}>◀</button>
+        <div style={{ fontSize: 12, color: C.onBg, fontWeight: 600, minWidth: 150, textAlign: "center" }}>Week of {weekLabelFromKey(wk)}</div>
+        <button onClick={() => setWk(nextWeekKey(wk))} disabled={wk >= currentWeekKey()} aria-label="Next week" style={{ width: 32, height: 32, borderRadius: 8, border: `1.5px solid ${wk >= currentWeekKey() ? C.border : C.gold + "66"}`, background: "transparent", color: wk >= currentWeekKey() ? C.muted : C.gold, fontSize: 14, cursor: wk >= currentWeekKey() ? "default" : "pointer" }}>▶</button>
+        {wk !== latestScoredWeek(allScores) && <button onClick={() => setWk(latestScoredWeek(allScores))} style={{ fontSize: 11, color: C.gold, background: "transparent", border: "none", cursor: "pointer", fontWeight: 700 }}>latest scored →</button>}
+        <span style={{ fontSize: 11, color: C.muted }}>· dual-role members listed once per card</span>
+      </div>
       <RecognitionSection roster={roster} allScores={allScores} shoutouts={shoutouts || []} onAdd={onAddShoutout} onDelete={onDeleteShoutout} unlocked={unlocked} />
       <CelebrationsCard roster={roster} />
 
       {(() => {
-        const satWeek = latestScoredWeek(allScores);
+        const satWeek = wk;
         const avg = teamSatisfactionAvg(notes, satWeek, activeTeam);
         const count = satisfactionCount(notes, satWeek, activeTeam);
         const good = avg !== null && avg >= SATISFACTION_TARGET;
@@ -3416,7 +3441,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v47</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v48</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
