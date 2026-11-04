@@ -2997,22 +2997,30 @@ function PerformanceView({ roster, actuals, allScores }) {
   const rpbh = hasBooked && nBooked > 0 ? nSales / nBooked : null;
   const dx = diagnosePerformance(pph, util);
 
+  // Utilization is what you have from Phorest; entering it fills Booked Hours
+  // (Booked = Utilization × Available). Booked stays editable too — two-way.
+  const utilDisplay = util != null ? String(Math.round(util)) : "";
+  const setUtil = v => {
+    if (v === "" || isNaN(parseFloat(v))) { setBooked(""); return; }
+    if (nAvail > 0) setBooked(String(+((parseFloat(v) / 100) * nAvail).toFixed(2)));
+  };
+
   const dirty = sales !== seededSales || avail !== seededAvail || booked !== "";
   const reset = () => { setSales(seededSales); setAvail(seededAvail); setBooked(""); };
 
-  const salesMax = Math.max(4000, Math.ceil((Math.max(nSales, hasRecordedSales ? recordedSales : 0) * 1.6) / 500) * 500);
+  const salesMax = Math.max(2500, Math.ceil(Math.max(nSales, hasRecordedSales ? recordedSales : 0) / 100) * 100);
   const hrMax = Math.max(50, Math.ceil(Math.max(nAvail, nBooked) / 5) * 5);
   const money = v => "$" + Math.round(v).toLocaleString();
 
-  const field = (label, val, setVal, max, step, fmt) => (
+  const field = (label, val, onCh, max, step) => (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>{label}</span>
-        <input value={val} onChange={e => setVal(e.target.value)} inputMode="decimal"
+        <input value={val} onChange={e => onCh(e.target.value)} inputMode="decimal"
           style={{ width: 96, padding: "5px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, textAlign: "right", fontWeight: 700, color: C.ink }} />
       </div>
       <input type="range" min={0} max={max} step={step} value={val === "" ? 0 : Math.min(parseFloat(val) || 0, max)}
-        onChange={e => setVal(e.target.value)} style={{ width: "100%", accentColor: C.gold }} />
+        onChange={e => onCh(e.target.value)} style={{ width: "100%", accentColor: C.gold }} />
     </div>
   );
 
