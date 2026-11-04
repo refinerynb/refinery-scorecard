@@ -3088,7 +3088,7 @@ function PerformanceView({ roster, actuals, allScores }) {
         <KpiCard label="Utilization" value={util} fmt={v => v.toFixed(0) + "%"} target={UTILIZATION_TARGET_PCT}
           targetLabel={`Target ${UTILIZATION_TARGET_PCT}%+ (over ${UTIL_OVERBOOKED_PCT}% = overbooked)`} status={utilStatus}
           statusText={util == null ? "" : util < UTILIZATION_TARGET_PCT ? `${(UTILIZATION_TARGET_PCT - util).toFixed(0)} pts under` : util > UTIL_OVERBOOKED_PCT ? "Overbooked" : "On target"}
-          note="Enter Booked + Available Hours" />
+          note="Enter Utilization + Available Hours" />
         <KpiCard label="Rev / Booked Hr" value={rpbh} fmt={v => money(v)} target={null}
           targetLabel="Earning power per hour actually worked" status={rpbh == null ? null : "good"}
           statusText="Sales ÷ booked hours" note="Enter Booked Hours" />
@@ -3111,11 +3111,12 @@ function PerformanceView({ roster, actuals, allScores }) {
         </div>
         {field("Service Sales ($)", sales, setSales, salesMax, 10)}
         {field("Available Hours (scheduled)", avail, setAvail, hrMax, 1)}
-        {field("Booked Hours (worked)", booked, setBooked, hrMax, 1)}
+        {field("Utilization % (from Phorest)", utilDisplay, setUtil, 120, 1)}
+        {field("Booked Hours (auto from utilization)", booked, setBooked, hrMax, 1)}
         <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.6, marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
           Service Sales {hasRecordedSales ? <>seeded from this week's recorded <strong>{money(recordedSales)}</strong></> : <span style={{ color: C.pink }}>has no recorded value for this week — enter it manually</span>}.{" "}
           Available Hours {rosterAvail != null ? <>seeded from {member?.name}'s roster ({rosterAvail} hrs/wk)</> : <span style={{ color: C.pink }}>not set on the roster — add it under Roster, or enter it here</span>}.{" "}
-          Booked Hours isn't tracked yet, so enter it from Phorest for a real reading.
+          Enter <strong>Utilization</strong> from Phorest and Booked Hours fills in automatically (Utilization × Available) — or type Booked Hours directly and Utilization follows.
         </div>
       </div>
 
@@ -3661,7 +3662,7 @@ export default function RefineryApp() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 10, letterSpacing: 3, color: C.gold, fontWeight: 700, textTransform: "uppercase" }}>The Refinery</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: C.white, letterSpacing: -0.3 }}>STRA-TEGIC Performance System</span>
-            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v50</span>
+            <span style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>v51</span>
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
             <NavBtn id="dashboard" label="Dashboard" />
